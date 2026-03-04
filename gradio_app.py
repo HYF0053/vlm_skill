@@ -120,6 +120,9 @@ def create_dynamic_agent(provider: str, api_url: str, model_name: str, max_token
     )
     return agent
 
+# Max LangGraph recursion steps — prevents infinite tool-call loops
+MAX_AGENT_STEPS = 15
+
 # --- Core Logic Handlers ---
 
 def refresh_models(provider, api_url):
@@ -139,23 +142,27 @@ def refresh_models(provider, api_url):
     
     return gr.Dropdown(choices=models, value=models[0] if models else None)
 
-def run_ocr_task(image, provider, api_url, model_name, max_tokens, system_prompt, user_prompt, progress=gr.Progress()):
-    """Execute the OCR task."""
+def run_ocr_task(image, provider, api_url, model_name, max_tokens, system_prompt, user_prompt):
+    """Execute the OCR task with real-time streaming logs (generator)."""
     if not image:
-        return "Please upload an image.", ""
+        yield "Please upload an image.", ""
+        return
     if not model_name:
-        return "Please select a model.", ""
+        yield "Please select a model.", ""
+        return
 
-    progress(0, desc="Initializing Agent...")
+    yield "", "⏳ Initializing Agent..."
     try:
         agent = create_dynamic_agent(provider, api_url, model_name, max_tokens, system_prompt)
     except Exception as e:
-        return f"Error creating agent: {e}", ""
+        yield f"Error creating agent: {e}", ""
+        return
 
-    progress(0.2, desc="Encoding Image...")
+    yield "", "⏳ Encoding Image..."
     base64_image = encode_image(image)
     if not base64_image:
-        return "Failed to encode image.", ""
+        yield "Failed to encode image.", ""
+        return
 
     query = user_prompt if user_prompt else "請幫我提取這張單據的資料，請自行判斷是哪一類單據，然後依照其種類去提取相對應的欄位資料。"
 
@@ -164,36 +171,93 @@ def run_ocr_task(image, provider, api_url, model_name, max_tokens, system_prompt
         {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
     ]
 
-    config = {"configurable": {"thread_id": str(uuid.uuid4())}}
+    config = {
+        "configurable": {"thread_id": str(uuid.uuid4())},
+        "recursion_limit": MAX_AGENT_STEPS,  # prevent infinite loops
+    }
 
-    progress(0.4, desc="Running Inference (this may take a while)...")
+    log_lines = ["⏳ Running Inference (this may take a while)..."]
+    current_output = ""
+
+    # --- Loop-detection state ---
+    # Track (tool_name, args_repr) of last tool call; count consecutive duplicates
+    _last_tool_sig: str = ""
+    _dup_count: int = 0
+    MAX_DUP_CALLS = 3  # abort if same tool+args called this many times in a row
+
+    yield current_output, "\n\n".join(log_lines)
+
     try:
-        # Invoke agent
-        result = agent.invoke(
+        for update in agent.stream(
             {"messages": [{"role": "user", "content": message_content}]},
-            config
-        )
-        
-        # Extract logs
-        logs = []
-        for msg in result["messages"]:
-            if msg.type == "ai":
-                if msg.content:
-                    logs.append(f"🤖 AI Thinking:\n{msg.content}")
-                if msg.tool_calls:
-                    for tc in msg.tool_calls:
-                        logs.append(f"🔧 Calling Tool: {tc['name']} (args: {tc['args']})")
-            elif msg.type == "tool":
-                logs.append(f"✅ Tool Output ({msg.name}):\n{msg.content}")
-        
-        log_str = "\n\n".join(logs)
-        
-        # Extract last message content
-        last_message = result["messages"][-1].content
-        return last_message, log_str
+            config,
+            stream_mode="updates",
+        ):
+            for node_name, node_output in update.items():
+                msgs = node_output.get("messages", []) if isinstance(node_output, dict) else []
+
+                for msg in msgs:
+                    msg_type = getattr(msg, "type", None)
+
+                    if msg_type == "ai":
+                        content = getattr(msg, "content", "") or ""
+                        tool_calls = getattr(msg, "tool_calls", None) or []
+
+                        for tc in tool_calls:
+                            name = tc.get("name", "")
+                            args = tc.get("args", {})
+                            if name:
+                                # --- Duplicate-call detection ---
+                                sig = f"{name}::{repr(args)}"
+                                if sig == _last_tool_sig:
+                                    _dup_count += 1
+                                else:
+                                    _last_tool_sig = sig
+                                    _dup_count = 1
+
+                                if _dup_count >= MAX_DUP_CALLS:
+                                    warn = (
+                                        f"\n⚠️  Detected repeated tool call "
+                                        f"({name} x{_dup_count}). "
+                                        f"Stopping to prevent infinite loop."
+                                    )
+                                    log_lines.append(warn)
+                                    yield current_output, "\n\n".join(log_lines)
+                                    return
+
+                                log_lines.append(f"🔧 Calling Tool: {name} (args: {args})")
+
+                        if content:
+                            if tool_calls:
+                                log_lines.append(f"🤖 AI Thinking:\n{content}")
+                            else:
+                                log_lines.append(f"🤖 Final Answer:\n{content}")
+                                current_output = content
+
+                        yield current_output, "\n\n".join(log_lines)
+
+                    elif msg_type == "tool":
+                        tool_name = getattr(msg, "name", "tool")
+                        tool_content = getattr(msg, "content", "")
+                        log_lines.append(f"✅ Tool Output ({tool_name}):\n{tool_content}")
+                        yield current_output, "\n\n".join(log_lines)
 
     except Exception as e:
-        return f"inference failed: {e}", ""
+        err_msg = str(e)
+        # LangGraph raises GraphRecursionError when recursion_limit is hit
+        if "recursion" in err_msg.lower() or "GraphRecursion" in err_msg:
+            log_lines.append(
+                f"\n⚠️  Agent exceeded max steps ({MAX_AGENT_STEPS}). "
+                f"Task stopped to prevent infinite loop."
+            )
+        else:
+            log_lines.append(f"\n❌ Error: {err_msg}")
+            current_output = f"inference failed: {err_msg}"
+        yield current_output, "\n\n".join(log_lines)
+        return
+
+    yield current_output, "\n\n".join(log_lines)
+
 
 # --- Skill Editor Handlers ---
 
@@ -388,7 +452,9 @@ with gr.Blocks(title="Agentic OCR Studio") as demo:
                     gr.Markdown("### 📝 Output")
                     output_text = gr.Textbox(label="Agent Response", lines=10, interactive=False)
                     log_output = gr.Textbox(label="Thinking Process & Logs", lines=10, interactive=False)
-                    run_btn = gr.Button("🚀 Run OCR Analysis", variant="primary", size="lg")
+                    with gr.Row():
+                        run_btn = gr.Button("🚀 Run OCR Analysis", variant="primary", scale=3)
+                        stop_btn = gr.Button("⏹️ Stop", variant="stop", scale=1)
             
             # Event Wiring
             refresh_btn.click(refresh_models, inputs=[provider_dropdown, api_url_input], outputs=model_dropdown)
@@ -396,11 +462,13 @@ with gr.Blocks(title="Agentic OCR Studio") as demo:
             # Auto-refresh on provider change (optional, maybe better explicit)
             # provider_dropdown.change(refresh_models, inputs=[provider_dropdown, api_url_input], outputs=model_dropdown)
 
-            run_btn.click(
-                run_ocr_task, 
-                inputs=[image_input, provider_dropdown, api_url_input, model_dropdown, max_tokens_slider, system_prompt_input, user_prompt_input], 
-                outputs=[output_text, log_output]
+            run_event = run_btn.click(
+                run_ocr_task,
+                inputs=[image_input, provider_dropdown, api_url_input, model_dropdown, max_tokens_slider, system_prompt_input, user_prompt_input],
+                outputs=[output_text, log_output],
             )
+            # Stop button cancels the running generator immediately
+            stop_btn.click(fn=None, cancels=[run_event])
 
         # --- TAB 2: SKILLS ---
         with gr.Tab("📚 Skill Manager"):

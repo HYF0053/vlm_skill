@@ -1,6 +1,6 @@
 ---
-name: Image to Markdown Reconstruction
-description: "[OUTPUT: MARKDOWN ONLY] Expert for 1:1 visual reconstruction of images into Markdown. Captures ALL content: tables, titles, handwriting, stamps, and signatures. Use for 'Markdown', 'MD', or 'Full Page' requests."
+name: image_to_markdown
+description: "[OUTPUT: MARKDOWN ONLY] Expert for 1:1 visual reconstruction of images into Markdown. Captures ALL content: tables, titles, handwriting, stamps, and signatures. Use for 'Markdown', 'MD', or 'Full Page' requests. Access via load_skill_overview('image_to_markdown')."
 ---
 
 # Image to Markdown Reconstruction Skill

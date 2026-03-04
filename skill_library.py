@@ -45,6 +45,20 @@ class FileSystemSkillRepository(SkillRepository):
     def __init__(self, root_directory: str):
         self.root_directory = os.path.abspath(root_directory)
         self._cache_skills: Optional[List[Skill]] = None
+        # Cache for file contents: {abs_path -> content_str}
+        # Prevents redundant disk reads within the same session.
+        self._cache_file_contents: dict = {}
+
+    def _read_file_cached(self, abs_path: str) -> Optional[str]:
+        """Read a file, returning cached content if already loaded."""
+        if abs_path not in self._cache_file_contents:
+            try:
+                with open(abs_path, 'r', encoding='utf-8') as f:
+                    self._cache_file_contents[abs_path] = f.read()
+            except Exception as e:
+                print(f"Error reading {abs_path}: {e}")
+                return None
+        return self._cache_file_contents[abs_path]
 
     def get_all_skills(self) -> List[Skill]:
         if self._cache_skills is not None:
@@ -78,13 +92,15 @@ class FileSystemSkillRepository(SkillRepository):
         return skills
 
     def _parse_frontmatter(self, file_path: str) -> tuple[Optional[str], Optional[str]]:
-        """Parses simple YAML frontmatter from a markdown file."""
-        with open(file_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        
+        """Parses YAML frontmatter from a markdown file.
+        Uses the shared file cache so each SKILL.md is read from disk only once.
+        """
+        content = self._read_file_cached(os.path.abspath(file_path))
+        if content is None:
+            return None, None
+
         if content.startswith('---'):
             try:
-                # Find the second '---'
                 end_idx = content.find('---', 3)
                 if end_idx != -1:
                     frontmatter_str = content[3:end_idx]
@@ -92,7 +108,7 @@ class FileSystemSkillRepository(SkillRepository):
                     return data.get('name'), data.get('description')
             except Exception as e:
                 print(f"Failed to parse frontmatter for {file_path}: {e}")
-        
+
         return None, None
 
     def _find_skill_by_name(self, skill_name: str) -> Optional[Skill]:
@@ -116,13 +132,8 @@ class FileSystemSkillRepository(SkillRepository):
         skill = self._find_skill_by_name(skill_name)
         if not skill:
             return None
-            
-        try:
-            with open(os.path.join(skill.path, "SKILL.md"), 'r', encoding='utf-8') as f:
-                return f.read()
-        except Exception as e:
-            print(f"Error reading SKILL.md for {skill_name}: {e}")
-            return None
+        abs_path = os.path.join(skill.path, "SKILL.md")
+        return self._read_file_cached(abs_path)
 
     def get_skill_details(self, skill_name: str, file_path: str) -> Optional[str]:
         skill = self._find_skill_by_name(skill_name)
@@ -145,8 +156,11 @@ class FileSystemSkillRepository(SkillRepository):
              return f"Error: {file_path} is a directory."
 
         try:
-            with open(target_path, 'r', encoding='utf-8') as f:
-                return f.read()
+            abs_target = os.path.abspath(target_path)
+            content = self._read_file_cached(abs_target)
+            if content is None:
+                return f"Error reading file {file_path}"
+            return content
         except Exception as e:
             return f"Error reading file {file_path}: {e}"
             

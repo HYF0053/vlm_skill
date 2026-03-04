@@ -1,6 +1,6 @@
 ---
-name: Form OCR Extraction
-description: "[OUTPUT: JSON ONLY] Extractor for structured form data. Use ONLY when JSON format is required. Supports: Accident Reports, Medical Receipts, and other forms. Do NOT use for Markdown table layout."
+name: form_ocr_skill
+description: "[OUTPUT: JSON ONLY] Extractor for structured form data. Use ONLY when JSON format is required. Supports: Accident Reports, Medical Receipts, and other forms. Do NOT use for Markdown table layout. Access via load_skill_overview('form_ocr_skill')."
 ---
 
 # Form OCR Extraction Skill

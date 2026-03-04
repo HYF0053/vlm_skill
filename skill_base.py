@@ -12,9 +12,9 @@ from langchain_openai import ChatOpenAI
 from skill_library import FileSystemSkillRepository
 
 # Initialize Repository
-# Assuming scripts are run from /home/ubuntu/ocr_test or similar root
-# Using absolute path for safety based on previous tool outputs
-SKILL_REPO_PATH = "/home/ubuntu/ocr_test/skills"
+# Dynamically resolve the skills directory relative to this file's location
+# This works on both Windows and Linux without hardcoded paths
+SKILL_REPO_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "skills")
 skill_repo = FileSystemSkillRepository(SKILL_REPO_PATH)
 
 
@@ -22,25 +22,45 @@ skill_repo = FileSystemSkillRepository(SKILL_REPO_PATH)
 @tool
 def load_skill_overview(skill_name: str) -> str:
     """Load the overview of a skill to understand its capabilities and usage.
+    The SKILL.md content is already included in the return value \u2014 do NOT
+    call read_skill_file for SKILL.md afterwards.
 
     Args:
-        skill_name: The name of the skill to load (e.g., "form_ocr_skill").
+        skill_name: The exact snake_case skill name (e.g., "form_ocr_skill").
     """
     content = skill_repo.get_skill_overview(skill_name)
     if content:
         files = skill_repo.list_skill_files(skill_name)
-        file_list_str = "\n".join([f"- {f}" for f in files])
+        # Exclude SKILL.md \u2014 its full content is already returned above.
+        # Only show additional reference files the LLM may need to read.
+        extra_files = [f for f in files if f.upper() != "SKILL.MD"]
+        if extra_files:
+            file_list_str = "\n".join([f"- {f}" for f in extra_files])
+            files_section = (
+                f"=== Additional reference files you MAY read ===\n"
+                f"{file_list_str}\n"
+                f"=== SKILL.md is already shown above \u2014 do NOT re-read it ===\n\n"
+                f"Use read_skill_file(skill_name='{skill_name}', file_path=<path from list above>)"
+            )
+        else:
+            files_section = (
+                "No additional reference files. "
+                "All instructions are contained in the overview above."
+            )
         return (
             f"Loaded overview for skill: {skill_name}\n\n"
             f"{content}\n\n"
-            f"Available files to read in this skill:\n{file_list_str}\n\n"
-            f"Use 'read_skill_file' to read specific files."
+            f"{files_section}"
         )
     else:
-        # Suggest available skills
         skills = skill_repo.get_all_skills()
-        available = ", ".join(s.name for s in skills)
-        return f"Skill '{skill_name}' not found. Available skills: {available}"
+        available = ", ".join(f'"{s.name}"' for s in skills)
+        return (
+            f"Skill '{skill_name}' not found.\n"
+            f"Available skills (use exact name): {available}\n"
+            f"Call load_skill_overview with one of the exact names above."
+        )
+
 
 @tool
 def read_skill_file(skill_name: str, file_path: str) -> str:
@@ -73,14 +93,14 @@ class SkillMiddleware(AgentMiddleware):
         skills = skill_repo.get_all_skills()
         skills_list = []
         for skill in skills:
-            # We strip newlines from description to keep the prompt clean
             desc = skill.description.replace('\n', ' ').strip()
-            skills_list.append(f"- **{skill.name}**: {desc}")
+            # Use a format that looks like a reference table, NOT a function list
+            skills_list.append(f'  Skill key "{skill.name}"\n  Purpose: {desc}')
         
         if not skills_list:
-            self.skills_prompt = "No skills found."
+            self.skills_prompt = "No skills available."
         else:
-            self.skills_prompt = "\n".join(skills_list)
+            self.skills_prompt = "\n\n".join(skills_list)
 
     def wrap_model_call(
         self,
@@ -90,9 +110,22 @@ class SkillMiddleware(AgentMiddleware):
         """Sync: Inject skill descriptions into system prompt."""
         # Build the skills addendum
         skills_addendum = (
-            f"\n\n## Available Skills\n\n{self.skills_prompt}\n\n"
-            "Use 'load_skill_overview' to view details of a skill, and "
-            "'read_skill_file' to read specific reference documents within a skill."
+            "\n\n"
+            "================================================================\n"
+            "KNOWLEDGE SKILL LIBRARY (READ-ONLY REFERENCE — NOT CALLABLE)\n"
+            "================================================================\n"
+            "The following are skill LOOKUP KEYS, NOT tools or functions.\n"
+            "You MUST NOT call them directly. They do not exist as callable tools.\n\n"
+            f"{self.skills_prompt}\n\n"
+            "----------------------------------------------------------------\n"
+            "HOW TO USE A SKILL (mandatory workflow):\n"
+            "  Step 1: Call load_skill_overview(skill_name=\"<skill key above>\")\n"
+            "  Step 2: Read the overview, then call read_skill_file(...) if needed\n"
+            "  Step 3: Apply the skill instructions to the image yourself\n\n"
+            "CALLABLE TOOLS (the ONLY two tools you may invoke directly):\n"
+            "  - load_skill_overview(skill_name: str) -> str\n"
+            "  - read_skill_file(skill_name: str, file_path: str) -> str\n"
+            "================================================================"
         )
 
         # Append to system message content blocks
