@@ -10,13 +10,14 @@ from typing import List, Optional
 # We wrap this in try-except in case the environment is not set up perfectly, 
 # although we expect these files to exist based on analysis.
 try:
-    from skill_base import SkillMiddleware, skill_repo
+    from skill_base import SkillMiddleware, skill_repo, TOOL_REGISTRY
     from skill_library import Skill
 except ImportError:
     # Fallback for standalone testing if needed, though not expected to work fully without them
     print("Warning: Could not import skill_base or skill_library. Some features may not work.")
     SkillMiddleware = None
     skill_repo = None
+    TOOL_REGISTRY = {}
 
 from langchain_openai import ChatOpenAI
 from langchain.agents import create_agent
@@ -79,7 +80,7 @@ def encode_image(image_path, max_size=4096):
         print(f"Error processing image: {e}")
         return None
 
-def create_dynamic_agent(provider: str, api_url: str, model_name: str, max_tokens: int = 4096, system_prompt: str = None):
+def create_dynamic_agent(provider: str, api_url: str, model_name: str, system_prompt: str = None):
     """Creates a LangChain agent with the specified model configuration."""
     
     # Normalize base_url
@@ -93,13 +94,13 @@ def create_dynamic_agent(provider: str, api_url: str, model_name: str, max_token
             base_url = f"{base_url}/v1"
         api_key = "EMPTY" # Common for vLLM
     
-    print(f"Initializing ChatOpenAI with base_url={base_url}, model={model_name}, max_tokens={max_tokens}")
+    print(f"Initializing ChatOpenAI with base_url={base_url}, model={model_name}")
     
     llm = ChatOpenAI(
         model=model_name,
         api_key=api_key,
         base_url=base_url,
-        max_tokens=max_tokens, 
+        # max_tokens not set: let the API use the full remaining context window automatically
         temperature=0,
     )
 
@@ -123,6 +124,60 @@ def create_dynamic_agent(provider: str, api_url: str, model_name: str, max_token
 # Max LangGraph recursion steps — prevents infinite tool-call loops
 MAX_AGENT_STEPS = 15
 
+
+def _try_execute_text_tool_calls(content: str, log_lines: list) -> tuple[bool, str]:
+    """Detect and execute <tool_call> JSON blocks found in plain-text AI content.
+
+    Some models (e.g. Qwen) output tool calls as text tags instead of using
+    the OpenAI structured function-calling API.  This function intercepts
+    those blocks, runs the real tool, appends results to log_lines, and
+    returns (True, non_tool_text) when at least one tool was executed,
+    or (False, content) when no tool_call block was found.
+    """
+    import re
+
+    pattern = re.compile(r"<tool_call>\s*({.*?})\s*</tool_call>", re.DOTALL)
+    matches = pattern.findall(content)
+    if not matches:
+        return False, content
+
+    executed_any = False
+    for raw_json in matches:
+        try:
+            call = json.loads(raw_json)
+        except json.JSONDecodeError as e:
+            log_lines.append(f"⚠️ Failed to parse <tool_call> JSON: {e}\n{raw_json}")
+            continue
+
+        tool_name = call.get("name") or call.get("function", {}).get("name", "")
+        # arguments may be under "arguments" or "parameters"
+        args = call.get("arguments") or call.get("parameters") or {}
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except json.JSONDecodeError:
+                args = {}
+
+        log_lines.append(f"🔧 [Text tool_call] Calling Tool: {tool_name} (args: {args})")
+
+        tool_fn = TOOL_REGISTRY.get(tool_name)
+        if tool_fn is None:
+            log_lines.append(f"❌ Tool '{tool_name}' not found in registry.")
+            continue
+
+        try:
+            # LangChain @tool wraps the function; call it via .invoke() with a dict
+            result = tool_fn.invoke(args)
+        except Exception as e:
+            result = f"Error invoking tool: {e}"
+
+        log_lines.append(f"✅ Tool Output ({tool_name}):\n{result}")
+        executed_any = True
+
+    # Return the content with <tool_call> blocks stripped (the rest is reasoning text)
+    remaining = pattern.sub("", content).strip()
+    return executed_any, remaining
+
 # --- Core Logic Handlers ---
 
 def refresh_models(provider, api_url):
@@ -142,7 +197,7 @@ def refresh_models(provider, api_url):
     
     return gr.Dropdown(choices=models, value=models[0] if models else None)
 
-def run_ocr_task(image, provider, api_url, model_name, max_tokens, system_prompt, user_prompt):
+def run_ocr_task(image, provider, api_url, model_name, image_max_size, system_prompt, user_prompt):
     """Execute the OCR task with real-time streaming logs (generator)."""
     if not image:
         yield "Please upload an image.", ""
@@ -153,13 +208,13 @@ def run_ocr_task(image, provider, api_url, model_name, max_tokens, system_prompt
 
     yield "", "⏳ Initializing Agent..."
     try:
-        agent = create_dynamic_agent(provider, api_url, model_name, max_tokens, system_prompt)
+        agent = create_dynamic_agent(provider, api_url, model_name, system_prompt)
     except Exception as e:
         yield f"Error creating agent: {e}", ""
         return
 
     yield "", "⏳ Encoding Image..."
-    base64_image = encode_image(image)
+    base64_image = encode_image(image, max_size=int(image_max_size))
     if not base64_image:
         yield "Failed to encode image.", ""
         return
@@ -231,8 +286,18 @@ def run_ocr_task(image, provider, api_url, model_name, max_tokens, system_prompt
                             if tool_calls:
                                 log_lines.append(f"🤖 AI Thinking:\n{content}")
                             else:
-                                log_lines.append(f"🤖 Final Answer:\n{content}")
-                                current_output = content
+                                # ---- Text-format tool_call fallback ----
+                                # Some models emit <tool_call>...</tool_call> as plain text.
+                                # Detect, execute, and log them before treating as final answer.
+                                executed, remaining = _try_execute_text_tool_calls(content, log_lines)
+                                if executed:
+                                    # Tools ran — log any leftover reasoning text
+                                    if remaining:
+                                        log_lines.append(f"🤖 AI Thinking (after tool):\n{remaining}")
+                                else:
+                                    # No tool_call blocks — genuine final answer
+                                    log_lines.append(f"🤖 Final Answer:\n{content}")
+                                    current_output = content
 
                         yield current_output, "\n\n".join(log_lines)
 
@@ -433,12 +498,20 @@ with gr.Blocks(title="Agentic OCR Studio") as demo:
                             model_dropdown = gr.Dropdown(label="Select Model", interactive=True, scale=3, allow_custom_value=True)
                             refresh_btn = gr.Button("🔄 Refresh", scale=1)
                         
-                        max_tokens_slider = gr.Slider(minimum=256, maximum=8192, value=4096, step=256, label="Max Tokens")
+                        gr.Markdown("### 🖼️ Image Settings")
+                        image_max_size_slider = gr.Slider(
+                            minimum=256,
+                            maximum=4096,
+                            value=1024,
+                            step=128,
+                            label="Image Max Size (px)",
+                            info="限制圖片最長邊的像素數，數值越小 token 用量越少，適用於輸入限制較嚴的模型"
+                        )
 
                         with gr.Accordion("📝 Prompt Settings", open=False):
                             system_prompt_input = gr.TextArea(
                                 label="System Prompt", 
-                                value="You are an intelligent assistant with access to a library of capabilities (skills). Use them to help the user. When analyzing images (OCR), trust the skills to guide you on extraction rules.",
+                                value="You are an intelligent assistant with access to a library of capabilities (skills). Use them to help the user.",
                                 lines=3
                             )
                             user_prompt_input = gr.TextArea(
@@ -464,7 +537,7 @@ with gr.Blocks(title="Agentic OCR Studio") as demo:
 
             run_event = run_btn.click(
                 run_ocr_task,
-                inputs=[image_input, provider_dropdown, api_url_input, model_dropdown, max_tokens_slider, system_prompt_input, user_prompt_input],
+                inputs=[image_input, provider_dropdown, api_url_input, model_dropdown, image_max_size_slider, system_prompt_input, user_prompt_input],
                 outputs=[output_text, log_output],
             )
             # Stop button cancels the running generator immediately

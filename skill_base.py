@@ -1,5 +1,8 @@
 import uuid
 import os
+import sys
+import subprocess
+import shlex
 from typing import TypedDict, NotRequired, Callable
 from langchain.tools import tool
 from langchain.agents import create_agent
@@ -76,12 +79,188 @@ def read_skill_file(skill_name: str, file_path: str) -> str:
     content = skill_repo.get_skill_details(skill_name, file_path)
     return content
 
+
+@tool
+def execute_script(skill_name: str, script_path: str, args: str = "") -> str:
+    """Execute a Python script located inside a skill's directory.
+
+    Use this after reading a skill's SKILL.md and identifying a helper script
+    you want to run (e.g., in the scripts/ sub-folder).  The script is run
+    with the current Python interpreter so all installed packages are available.
+
+    Args:
+        skill_name: The exact skill name that owns the script.
+        script_path: Relative path inside the skill directory to the .py file
+                     (e.g., "scripts/convert_pdf_to_images.py").
+        args: Optional space-separated command-line arguments passed to the
+              script, exactly as you would write them on the command line
+              (e.g., "input.pdf output_dir").  Leave blank if none.
+
+    Returns:
+        Combined stdout + stderr output of the script, or an error message.
+    """
+    skill = skill_repo._find_skill_by_name(skill_name)
+    if skill is None:
+        available = ", ".join(f'"{s.name}"' for s in skill_repo.get_all_skills())
+        return f"Skill '{skill_name}' not found. Available skills: {available}"
+
+    # Resolve and validate the script path
+    abs_script = os.path.normpath(os.path.join(skill.path, script_path))
+    if not os.path.abspath(abs_script).startswith(os.path.abspath(skill.path)):
+        return "Error: script_path escapes the skill directory — access denied."
+    if not os.path.isfile(abs_script):
+        return f"Error: Script not found at '{abs_script}'."
+    if not abs_script.endswith(".py"):
+        return "Error: Only .py scripts may be executed via this tool."
+
+    # Build the command
+    cmd = [sys.executable, abs_script]
+    if args.strip():
+        cmd += shlex.split(args)
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=120,  # 2-minute safety timeout
+            cwd=skill.path,   # run from the skill directory so relative paths in the script work
+        )
+        output_parts = []
+        if result.stdout:
+            output_parts.append(f"[stdout]\n{result.stdout.rstrip()}")
+        if result.stderr:
+            output_parts.append(f"[stderr]\n{result.stderr.rstrip()}")
+        output_parts.append(f"[return code] {result.returncode}")
+        return "\n\n".join(output_parts) or "(no output)"
+    except subprocess.TimeoutExpired:
+        return "Error: Script execution timed out (>120 s)."
+    except Exception as e:
+        return f"Error running script: {e}"
+
+
+@tool
+def run_cli_command(command: str, working_directory: str = "") -> str:
+    """Execute an arbitrary CLI / shell command on the host system.
+
+    Use this when a skill's instructions ask you to run a command-line tool
+    (such as pdftotext, qpdf, ffmpeg, pip install, etc.) or when you need
+    to run a Python one-liner or any other shell command.
+
+    Args:
+        command: The full command string to execute (e.g., "pdftotext input.pdf output.txt",
+                 or "pip install pypdf", or "python -c \"import sys; print(sys.version)\"").
+        working_directory: Optional absolute path to use as the working directory.
+                           Defaults to the vlm_skill project root when left blank.
+
+    Returns:
+        Combined stdout + stderr of the command, or an error message.
+
+    IMPORTANT:
+      - This tool has real side-effects (file creation, package installs, etc.).
+      - Do NOT use it for destructive operations (rm -rf, format, etc.).
+      - Maximum execution time is 120 seconds.
+    """
+    # Default working directory = project root (same as this file)
+    cwd = working_directory.strip() if working_directory.strip() else os.path.dirname(os.path.abspath(__file__))
+
+    if not os.path.isdir(cwd):
+        return f"Error: working_directory '{cwd}' does not exist."
+
+    try:
+        result = subprocess.run(
+            command,
+            shell=True,          # allow full shell syntax including pipes, builtins, etc.
+            capture_output=True,
+            text=True,
+            timeout=120,
+            cwd=cwd,
+        )
+        output_parts = []
+        if result.stdout:
+            output_parts.append(f"[stdout]\n{result.stdout.rstrip()}")
+        if result.stderr:
+            output_parts.append(f"[stderr]\n{result.stderr.rstrip()}")
+        output_parts.append(f"[return code] {result.returncode}")
+        return "\n\n".join(output_parts) or "(no output)"
+    except subprocess.TimeoutExpired:
+        return "Error: Command timed out (>120 s)."
+    except Exception as e:
+        return f"Error running command: {e}"
+
+
+@tool
+def run_python_code(code: str, working_directory: str = "") -> str:
+    """Write a Python code string to a temporary file and execute it.
+
+    Use this when you want to write a new Python program based on examples or
+    instructions from a skill's SKILL.md (or any reference file) and immediately
+    run it.  The code is saved to a uniquely-named temp file, executed, then the
+    temp file is automatically deleted.
+
+    Args:
+        code: The complete, valid Python source code to run.  Must be a
+              self-contained script (all imports included).  Multi-line strings
+              are fine — just pass the code as-is.
+        working_directory: Optional absolute path to use as the working directory
+                           while the script runs.  Defaults to the vlm_skill
+                           project root when left blank.  Use this to control
+                           where output files created by the script are saved.
+
+    Returns:
+        Combined stdout + stderr of the executed script, or an error message.
+
+    Example workflow:
+        1. Load a skill and read its examples.
+        2. Write Python code based on those examples.
+        3. Call run_python_code(code=<your_code>, working_directory=<target_dir>)
+        4. Read the output / resulting files as needed.
+    """
+    import tempfile
+
+    cwd = working_directory.strip() if working_directory.strip() else os.path.dirname(os.path.abspath(__file__))
+
+    if not os.path.isdir(cwd):
+        return f"Error: working_directory '{cwd}' does not exist."
+
+    # Write code to a uniquely-named temp file so concurrent calls don't collide
+    tmp_path = os.path.join(tempfile.gettempdir(), f"vlm_skill_tmp_{uuid.uuid4().hex}.py")
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        result = subprocess.run(
+            [sys.executable, tmp_path],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            cwd=cwd,
+        )
+        output_parts = []
+        if result.stdout:
+            output_parts.append(f"[stdout]\n{result.stdout.rstrip()}")
+        if result.stderr:
+            output_parts.append(f"[stderr]\n{result.stderr.rstrip()}")
+        output_parts.append(f"[return code] {result.returncode}")
+        return "\n\n".join(output_parts) or "(no output)"
+    except subprocess.TimeoutExpired:
+        return "Error: Script execution timed out (>120 s)."
+    except Exception as e:
+        return f"Error running code: {e}"
+    finally:
+        # Always clean up the temp file
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+
+
 # Create skill middleware
 class SkillMiddleware(AgentMiddleware):
     """Middleware that injects skill descriptions into the system prompt."""
 
     # Register the tools as class variables
-    tools = [load_skill_overview, read_skill_file]
+    tools = [load_skill_overview, read_skill_file, execute_script, run_cli_command, run_python_code]
 
     def __init__(self):
         """Initialize and generate the skills prompt from the repository."""
@@ -121,10 +300,23 @@ class SkillMiddleware(AgentMiddleware):
             "HOW TO USE A SKILL (mandatory workflow):\n"
             "  Step 1: Call load_skill_overview(skill_name=\"<skill key above>\")\n"
             "  Step 2: Read the overview, then call read_skill_file(...) if needed\n"
-            "  Step 3: Apply the skill instructions to the image yourself\n\n"
-            "CALLABLE TOOLS (the ONLY two tools you may invoke directly):\n"
+            "  Step 3: Apply the skill instructions yourself, OR\n"
+            "          run a helper script with execute_script(...), OR\n"
+            "          run a CLI command with run_cli_command(...)\n\n"
+            "CALLABLE TOOLS (all tools you may invoke directly):\n"
             "  - load_skill_overview(skill_name: str) -> str\n"
             "  - read_skill_file(skill_name: str, file_path: str) -> str\n"
+            "  - execute_script(skill_name: str, script_path: str, args: str = \"\") -> str\n"
+            "      Run a Python script from the skill's scripts/ folder.\n"
+            "      Example: execute_script('pdf', 'scripts/convert_pdf_to_images.py', 'doc.pdf /tmp/out')\n"
+            "  - run_cli_command(command: str, working_directory: str = \"\") -> str\n"
+            "      Run any shell/CLI command (pdftotext, pip install, python -c ..., etc.)\n"
+            "      Example: run_cli_command('pdftotext input.pdf output.txt', '/tmp')\n"
+            "  - run_python_code(code: str, working_directory: str = \"\") -> str\n"
+            "      Write Python code you compose yourself and execute it immediately.\n"
+            "      Use this when you want to implement something based on skill examples\n"
+            "      (e.g., from SKILL.md code blocks) without needing a pre-existing script.\n"
+            "      Example: run_python_code(\"from reportlab.pdfgen import canvas\\nc = canvas.Canvas('out.pdf')\\n...\", 'C:/output')\n"
             "================================================================"
         )
 
@@ -142,6 +334,19 @@ class SkillMiddleware(AgentMiddleware):
         new_system_message = SystemMessage(content=new_content)
         modified_request = request.override(system_message=new_system_message)
         return handler(modified_request)
+
+# ---------------------------------------------------------------------------
+# Tool registry — maps tool name → callable (unwrapped from @tool decorator).
+# Used by the Gradio streaming handler to intercept text-format <tool_call>
+# blocks emitted by models that don't support structured function calling.
+# ---------------------------------------------------------------------------
+TOOL_REGISTRY: dict = {
+    "load_skill_overview": load_skill_overview,
+    "read_skill_file": read_skill_file,
+    "execute_script": execute_script,
+    "run_cli_command": run_cli_command,
+    "run_python_code": run_python_code,
+}
 
 # Initialize Chat Model
 # Disable LangSmith tracing to avoid errors if API key is missing/invalid
