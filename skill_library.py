@@ -79,6 +79,22 @@ class FileSystemSkillRepository(SkillRepository):
                         # Fallback if name is not in frontmatter
                         if not name:
                             name = item 
+                            
+                        # Extract dynamic description if script exists
+                        dynamic_desc_script = os.path.join(item_path, "scripts", "dynamic_description.py")
+                        if os.path.exists(dynamic_desc_script):
+                            try:
+                                import subprocess, sys
+                                result = subprocess.run(
+                                    [sys.executable, dynamic_desc_script], 
+                                    capture_output=True, 
+                                    text=True, 
+                                    timeout=5
+                                )
+                                if result.returncode == 0 and result.stdout.strip():
+                                    description = (description or "") + "\n\n" + result.stdout.strip()
+                            except Exception as e:
+                                print(f"Error executing dynamic_description.py for {item}: {e}")
                         
                         skills.append(Skill(
                             name=name,

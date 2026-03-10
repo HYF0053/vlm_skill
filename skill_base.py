@@ -81,7 +81,7 @@ def read_skill_file(skill_name: str, file_path: str) -> str:
 
 
 @tool
-def execute_script(skill_name: str, script_path: str, args: str = "") -> str:
+def execute_script(skill_name: str, script_path: str, script_args: str = "") -> str:
     """Execute a Python script located inside a skill's directory.
 
     Use this after reading a skill's SKILL.md and identifying a helper script
@@ -92,9 +92,9 @@ def execute_script(skill_name: str, script_path: str, args: str = "") -> str:
         skill_name: The exact skill name that owns the script.
         script_path: Relative path inside the skill directory to the .py file
                      (e.g., "scripts/convert_pdf_to_images.py").
-        args: Optional space-separated command-line arguments passed to the
-              script, exactly as you would write them on the command line
-              (e.g., "input.pdf output_dir").  Leave blank if none.
+        script_args: Optional space-separated command-line arguments passed to the
+                     script, exactly as you would write them on the command line
+                     (e.g., "input.pdf output_dir").  Leave blank if none.
 
     Returns:
         Combined stdout + stderr output of the script, or an error message.
@@ -115,8 +115,8 @@ def execute_script(skill_name: str, script_path: str, args: str = "") -> str:
 
     # Build the command
     cmd = [sys.executable, abs_script]
-    if args.strip():
-        cmd += shlex.split(args)
+    if script_args.strip():
+        cmd += shlex.split(script_args)
 
     try:
         result = subprocess.run(
@@ -306,7 +306,7 @@ class SkillMiddleware(AgentMiddleware):
             "CALLABLE TOOLS (all tools you may invoke directly):\n"
             "  - load_skill_overview(skill_name: str) -> str\n"
             "  - read_skill_file(skill_name: str, file_path: str) -> str\n"
-            "  - execute_script(skill_name: str, script_path: str, args: str = \"\") -> str\n"
+            "  - execute_script(skill_name: str, script_path: str, script_args: str = \"\") -> str\n"
             "      Run a Python script from the skill's scripts/ folder.\n"
             "      Example: execute_script('pdf', 'scripts/convert_pdf_to_images.py', 'doc.pdf /tmp/out')\n"
             "  - run_cli_command(command: str, working_directory: str = \"\") -> str\n"

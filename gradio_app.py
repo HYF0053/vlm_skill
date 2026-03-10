@@ -121,7 +121,7 @@ def create_dynamic_agent(provider: str, api_url: str, model_name: str, system_pr
     )
     return agent
 
-# Max LangGraph recursion steps — prevents infinite tool-call loops
+# Default LangGraph recursion steps (fallback)
 MAX_AGENT_STEPS = 15
 
 
@@ -197,39 +197,82 @@ def refresh_models(provider, api_url):
     
     return gr.Dropdown(choices=models, value=models[0] if models else None)
 
-def run_ocr_task(image, provider, api_url, model_name, image_max_size, system_prompt, user_prompt):
+def run_ocr_task(image, provider, api_url, model_name, image_max_size, max_agent_steps, system_prompt, user_prompt):
     """Execute the OCR task with real-time streaming logs (generator)."""
-    if not image:
-        yield "Please upload an image.", ""
-        return
+    # image is optional now
     if not model_name:
-        yield "Please select a model.", ""
+        yield "Please select a model.", "", ""
         return
 
-    yield "", "⏳ Initializing Agent..."
+    # User query fallback
+    query = user_prompt if user_prompt else "請幫我提取這張單據的資料，請自行判斷是哪一類單據，然後依照其種類去提取相對應的欄位資料。"
+
+    yield "", "⏳ Initializing Agent...", ""
     try:
         agent = create_dynamic_agent(provider, api_url, model_name, system_prompt)
     except Exception as e:
-        yield f"Error creating agent: {e}", ""
+        yield f"Error creating agent: {e}", "", ""
         return
 
-    yield "", "⏳ Encoding Image..."
-    base64_image = encode_image(image, max_size=int(image_max_size))
-    if not base64_image:
-        yield "Failed to encode image.", ""
-        return
+    message_content = [{"type": "text", "text": query}]
 
-    query = user_prompt if user_prompt else "請幫我提取這張單據的資料，請自行判斷是哪一類單據，然後依照其種類去提取相對應的欄位資料。"
-
-    message_content = [
-        {"type": "text", "text": query},
-        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
-    ]
+    if image:
+        yield "", "⏳ Encoding Image...", ""
+        base64_image = encode_image(image, max_size=int(image_max_size))
+        if base64_image:
+            message_content.append({
+                "type": "image_url", 
+                "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
+            })
+        else:
+            yield "Failed to encode image.", "", ""
+            return
 
     config = {
         "configurable": {"thread_id": str(uuid.uuid4())},
-        "recursion_limit": MAX_AGENT_STEPS,  # prevent infinite loops
+        "recursion_limit": int(max_agent_steps),  # prevent infinite loops
     }
+
+    # Extract the system prompt used by the agent to display to the user
+    # Langchain Agent executor hides the exact final prompt easily, but we know the middleware ran.
+    # To get the exact system prompt, we can use the skill_repo's injected logic wrapper:
+    final_system_prompt = system_prompt
+    if SkillMiddleware:
+        # Construct what the middleware actually appends
+        mw = SkillMiddleware()
+        final_system_prompt += "\n" + mw.skills_prompt if hasattr(mw, 'skills_prompt') else ""
+        skills_addendum = (
+            "\n\n"
+            "================================================================\n"
+            "KNOWLEDGE SKILL LIBRARY (READ-ONLY REFERENCE — NOT CALLABLE)\n"
+            "================================================================\n"
+            "The following are skill LOOKUP KEYS, NOT tools or functions.\n"
+            "You MUST NOT call them directly. They do not exist as callable tools.\n\n"
+            f"{mw.skills_prompt if hasattr(mw, 'skills_prompt') else ''}\n\n"
+            "----------------------------------------------------------------\n"
+            "HOW TO USE A SKILL (mandatory workflow):\n"
+            "  Step 1: Call load_skill_overview(skill_name=\"<skill key above>\")\n"
+            "  Step 2: Read the overview, then call read_skill_file(...) if needed\n"
+            "  Step 3: Apply the skill instructions yourself, OR\n"
+            "          run a helper script with execute_script(...), OR\n"
+            "          run a CLI command with run_cli_command(...)\n\n"
+            "CALLABLE TOOLS (all tools you may invoke directly):\n"
+            "  - load_skill_overview(skill_name: str) -> str\n"
+            "  - read_skill_file(skill_name: str, file_path: str) -> str\n"
+            "  - execute_script(skill_name: str, script_path: str, script_args: str = \"\") -> str\n"
+            "      Run a Python script from the skill's scripts/ folder.\n"
+            "      Example: execute_script('pdf', 'scripts/convert_pdf_to_images.py', 'doc.pdf /tmp/out')\n"
+            "  - run_cli_command(command: str, working_directory: str = \"\") -> str\n"
+            "      Run any shell/CLI command (pdftotext, pip install, python -c ..., etc.)\n"
+            "      Example: run_cli_command('pdftotext input.pdf output.txt', '/tmp')\n"
+            "  - run_python_code(code: str, working_directory: str = \"\") -> str\n"
+            "      Write Python code you compose yourself and execute it immediately.\n"
+            "      Use this when you want to implement something based on skill examples\n"
+            "      (e.g., from SKILL.md code blocks) without needing a pre-existing script.\n"
+            "      Example: run_python_code(\"from reportlab.pdfgen import canvas\\nc = canvas.Canvas('out.pdf')\\n...\", 'C:/output')\n"
+            "================================================================"
+        )
+        final_system_prompt = system_prompt + skills_addendum
 
     log_lines = ["⏳ Running Inference (this may take a while)..."]
     current_output = ""
@@ -240,7 +283,7 @@ def run_ocr_task(image, provider, api_url, model_name, image_max_size, system_pr
     _dup_count: int = 0
     MAX_DUP_CALLS = 3  # abort if same tool+args called this many times in a row
 
-    yield current_output, "\n\n".join(log_lines)
+    yield current_output, "\n\n".join(log_lines), final_system_prompt
 
     try:
         for update in agent.stream(
@@ -277,7 +320,7 @@ def run_ocr_task(image, provider, api_url, model_name, image_max_size, system_pr
                                         f"Stopping to prevent infinite loop."
                                     )
                                     log_lines.append(warn)
-                                    yield current_output, "\n\n".join(log_lines)
+                                    yield current_output, "\n\n".join(log_lines), final_system_prompt
                                     return
 
                                 log_lines.append(f"🔧 Calling Tool: {name} (args: {args})")
@@ -299,29 +342,29 @@ def run_ocr_task(image, provider, api_url, model_name, image_max_size, system_pr
                                     log_lines.append(f"🤖 Final Answer:\n{content}")
                                     current_output = content
 
-                        yield current_output, "\n\n".join(log_lines)
+                        yield current_output, "\n\n".join(log_lines), final_system_prompt
 
                     elif msg_type == "tool":
                         tool_name = getattr(msg, "name", "tool")
                         tool_content = getattr(msg, "content", "")
                         log_lines.append(f"✅ Tool Output ({tool_name}):\n{tool_content}")
-                        yield current_output, "\n\n".join(log_lines)
+                        yield current_output, "\n\n".join(log_lines), final_system_prompt
 
     except Exception as e:
         err_msg = str(e)
         # LangGraph raises GraphRecursionError when recursion_limit is hit
         if "recursion" in err_msg.lower() or "GraphRecursion" in err_msg:
             log_lines.append(
-                f"\n⚠️  Agent exceeded max steps ({MAX_AGENT_STEPS}). "
+                f"\n⚠️  Agent exceeded max steps ({max_agent_steps}). "
                 f"Task stopped to prevent infinite loop."
             )
         else:
             log_lines.append(f"\n❌ Error: {err_msg}")
             current_output = f"inference failed: {err_msg}"
-        yield current_output, "\n\n".join(log_lines)
+        yield current_output, "\n\n".join(log_lines), final_system_prompt
         return
 
-    yield current_output, "\n\n".join(log_lines)
+    yield current_output, "\n\n".join(log_lines), final_system_prompt
 
 
 # --- Skill Editor Handlers ---
@@ -477,7 +520,7 @@ def create_new_file(skill_name, new_file_name):
 
 # --- GUI Construction ---
 
-with gr.Blocks(title="Agentic OCR Studio") as demo:
+with gr.Blocks(title="Agentic OCR Studio", css="footer {visibility: hidden}") as demo:
     gr.Markdown("# 🕵️‍♂️ Agentic OCR Studio")
     
     with gr.Tabs():
@@ -508,7 +551,17 @@ with gr.Blocks(title="Agentic OCR Studio") as demo:
                             info="限制圖片最長邊的像素數，數值越小 token 用量越少，適用於輸入限制較嚴的模型"
                         )
 
-                        with gr.Accordion("📝 Prompt Settings", open=False):
+                        gr.Markdown("### 🤖 Agent Settings")
+                        max_agent_steps_slider = gr.Slider(
+                            minimum=1,
+                            maximum=50,
+                            value=15,
+                            step=1,
+                            label="Max Agent Steps",
+                            info="限制 Agent 思考與呼叫工具的最大次數，防止無限迴圈"
+                        )
+
+                        with gr.Accordion("📝 Prompt Settings", open=True):
                             system_prompt_input = gr.TextArea(
                                 label="System Prompt", 
                                 value="You are an intelligent assistant with access to a library of capabilities (skills). Use them to help the user.",
@@ -525,6 +578,7 @@ with gr.Blocks(title="Agentic OCR Studio") as demo:
                     gr.Markdown("### 📝 Output")
                     output_text = gr.Textbox(label="Agent Response", lines=10, interactive=False)
                     log_output = gr.Textbox(label="Thinking Process & Logs", lines=10, interactive=False)
+                    final_system_prompt_output = gr.Textbox(label="Actual Injected System Prompt", lines=8, interactive=False)
                     with gr.Row():
                         run_btn = gr.Button("🚀 Run OCR Analysis", variant="primary", scale=3)
                         stop_btn = gr.Button("⏹️ Stop", variant="stop", scale=1)
@@ -537,8 +591,8 @@ with gr.Blocks(title="Agentic OCR Studio") as demo:
 
             run_event = run_btn.click(
                 run_ocr_task,
-                inputs=[image_input, provider_dropdown, api_url_input, model_dropdown, image_max_size_slider, system_prompt_input, user_prompt_input],
-                outputs=[output_text, log_output],
+                inputs=[image_input, provider_dropdown, api_url_input, model_dropdown, image_max_size_slider, max_agent_steps_slider, system_prompt_input, user_prompt_input],
+                outputs=[output_text, log_output, final_system_prompt_output],
             )
             # Stop button cancels the running generator immediately
             stop_btn.click(fn=None, cancels=[run_event])
@@ -596,4 +650,4 @@ with gr.Blocks(title="Agentic OCR Studio") as demo:
             )
 
 if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0", server_port=7860, share=False, css="footer {visibility: hidden}")
+    demo.launch(server_name="0.0.0.0", server_port=7860, share=False)
