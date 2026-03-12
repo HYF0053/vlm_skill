@@ -1,0 +1,21 @@
+{
+    "qdrant": {
+        "host": "10.1.1.7",
+        "port": 29217,
+        "collections": [
+            "test_docs",
+            "hw_gpu_kb",
+            "hw_system_kb"
+        ]
+    },
+    "embedding": {
+        "base_url": "http://10.1.1.7:22531",
+        "model": "BAAI/bge-m3",
+        "backend": "vllm"
+    },
+    "rerank": {
+        "base_url": "http://10.1.1.7:27843",
+        "model": "BAAI/bge-reranker-v2-m3",
+        "backend": "vllm"
+    }
+}
