@@ -6,6 +6,16 @@ import uuid
 import base64
 from typing import List, Optional
 
+# Persistent memory layer (session / memory separation)
+from memory_store import (
+    memory_store,
+    make_llm_summariser,
+    MemoryStore,
+    SESSION_KEY_PRESETS,
+    SUMMARY_EVERY_N_TURNS,
+    prune_checkpointer,
+)
+
 # Import middleware and repo from existing codebase
 # We wrap this in try-except in case the environment is not set up perfectly, 
 # although we expect these files to exist based on analysis.
@@ -42,8 +52,7 @@ def get_ollama_models(api_url: str) -> List[str]:
 def get_vllm_models(api_url: str) -> List[str]:
     """Fetch available models from a vLLM/OpenAI-compatible endpoint."""
     try:
-        # OpenAI compatible models endpoint
-        url = f"{api_url}/v1/models" # Adjust if user inputs full path
+        url = f"{api_url}/v1/models"
         if api_url.endswith("/v1"):
             url = f"{api_url}/models"
             
@@ -54,6 +63,85 @@ def get_vllm_models(api_url: str) -> List[str]:
     except Exception as e:
         print(f"Error fetching vLLM models: {e}")
     return []
+
+
+def get_model_context_len(api_url: str, model_id: str) -> Optional[int]:
+    """
+    從 vLLM /v1/models 取得指定 model 的 max_model_len（最大 context token 數）。
+
+    Returns None if the endpoint doesn't support it or request fails.
+    """
+    try:
+        url = f"{api_url}/v1/models"
+        if api_url.endswith("/v1"):
+            url = f"{api_url}/models"
+        resp = requests.get(url, timeout=5)
+        if resp.status_code == 200:
+            for m in resp.json().get("data", []):
+                if m.get("id") == model_id:
+                    return m.get("max_model_len")  # vLLM-specific field
+    except Exception as e:
+        print(f"[context_len] Could not fetch max_model_len: {e}")
+    return None
+
+
+def compute_memory_params(
+    max_model_len: int,
+    max_output_tokens: int = 2048,
+    system_prompt_chars: int = 2000,
+    image_tokens_reserve: int = 0,    # 有圖片時建議傳入 2048~8192
+    safety_margin: float = 0.15,      # 保留 15% 緩衝
+    chars_per_token: float = 1.8,     # 中文偏低，英文偏高，混合約 1.8
+) -> dict:
+    """
+    根據 max_model_len 動態計算各記憶體管理閾值。
+
+    公式
+    ----
+    usable_tokens = max_model_len
+                    - max_output_tokens
+                    - system_prompt_tokens   (chars / chars_per_token)
+                    - image_tokens_reserve
+                    - safety_buffer          (usable * safety_margin)
+
+    Returns dict with keys:
+        usable_tokens       : 可用於對話歷史的 token 數
+        summary_char_budget : 觸發 LLM 摘要的字元閾值（memory_store.py 用）
+        map_reduce_chunk_size : map_reduce skill 的切片大小（字元）
+        keep_recent_turns   : InMemorySaver 保留最近幾輪
+        recent_messages_keep : JSON 持久層保留幾則近期訊息
+    """
+    system_tokens = system_prompt_chars / chars_per_token
+    raw_usable = max_model_len - max_output_tokens - system_tokens - image_tokens_reserve
+    usable_tokens = int(raw_usable * (1 - safety_margin))
+    usable_tokens = max(1000, usable_tokens)  # 最低保底 1000 tokens
+
+    # ── 字元換算 ──────────────────────────────────────────────────────────
+    usable_chars = int(usable_tokens * chars_per_token)
+
+    # 觸發摘要的閾值：佔可用空間的 40%（還有 60% 給 system prompt + 剩餘歷史）
+    summary_char_budget = int(usable_chars * 0.40)
+
+    # map_reduce chunk 大小：讓單次 Map call 佔 context 的 20%
+    map_reduce_chunk_size = int(usable_chars * 0.20)
+    map_reduce_chunk_size = max(800, min(map_reduce_chunk_size, 4000))  # 限 800~4000
+
+    # InMemorySaver 保留幾輪：以每輪 ~600 chars 估算
+    chars_per_turn = 600
+    keep_recent_turns = max(2, min(int(usable_chars * 0.30 / chars_per_turn), 10))
+
+    # JSON 持久層保留幾則（每則 = 1 role 的發言）
+    recent_messages_keep = keep_recent_turns * 2  # 每輪 2 則
+
+    return {
+        "max_model_len":         max_model_len,
+        "usable_tokens":         usable_tokens,
+        "usable_chars":          usable_chars,
+        "summary_char_budget":   summary_char_budget,
+        "map_reduce_chunk_size": map_reduce_chunk_size,
+        "keep_recent_turns":     keep_recent_turns,
+        "recent_messages_keep":  recent_messages_keep,
+    }
 
 from PIL import Image
 import io
@@ -79,6 +167,11 @@ def encode_image(image_path, max_size=4096):
     except Exception as e:
         print(f"Error processing image: {e}")
         return None
+
+# Create a single checkpointer to persist multi-turn sessions across identical thread_ids
+# The InMemorySaver handles working memory (current session LangGraph state).
+# For cross-session persistence, memory_store.py provides the persistent layer.
+global_checkpointer = InMemorySaver()
 
 def create_dynamic_agent(provider: str, api_url: str, model_name: str, system_prompt: str = None):
     """Creates a LangChain agent with the specified model configuration."""
@@ -117,7 +210,7 @@ def create_dynamic_agent(provider: str, api_url: str, model_name: str, system_pr
         llm,
         system_prompt=system_prompt,
         middleware=middleware,
-        checkpointer=InMemorySaver(),
+        checkpointer=global_checkpointer,
     )
     return agent
 
@@ -197,50 +290,132 @@ def refresh_models(provider, api_url):
     
     return gr.Dropdown(choices=models, value=models[0] if models else None)
 
-def run_ocr_task(image, provider, api_url, model_name, image_max_size, max_agent_steps, system_prompt, user_prompt):
-    """Execute the OCR task with real-time streaming logs (generator)."""
-    # image is optional now
+# 支持直接個別讀取的文字檔類型
+TEXT_EXTENSIONS = {
+    ".txt", ".md", ".csv", ".json", ".xml", ".html",
+    ".log", ".yaml", ".yml", ".toml", ".ini", ".py",
+    ".js", ".ts", ".sql",
+}
+
+# 支持經 base64 轉換送入模型的圖片類型
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tiff", ".tif"}
+
+
+def classify_uploaded_file(file_path: str) -> str:
+    """
+    判斷上傳檔案的類型。
+    Returns: 'image' | 'text' | 'binary'
+    """
+    if not file_path:
+        return 'none'
+    ext = os.path.splitext(file_path)[1].lower()
+    if ext in IMAGE_EXTENSIONS:
+        return 'image'
+    if ext in TEXT_EXTENSIONS:
+        return 'text'
+    return 'binary'   # pdf, ppt, xlsx 等—需要由 agent 透過 skill 處理
+
+
+def run_agent_task(file_upload, provider, api_url, model_name, image_max_size, max_agent_steps, system_prompt, user_prompt, chatbot_history, session_key):
+    """Execute the agent task with real-time streaming logs (generator) and multi-turn chat.
+    
+    file_upload: 上傳的檔案路徑（可能是圖片、PDF、CSV、文字撪 等任意檔案）
+    """
+    if chatbot_history is None:
+        chatbot_history = []
+
+    query = user_prompt.strip() if user_prompt and user_prompt.strip() else "請問有什麼我可以幫助您？"
+
     if not model_name:
-        yield "Please select a model.", "", ""
+        chatbot_history.append((query, "Please select a model."))
+        yield chatbot_history, "", ""
         return
 
-    # User query fallback
-    query = user_prompt if user_prompt else "請幫我提取這張單據的資料，請自行判斷是哪一類單據，然後依照其種類去提取相對應的欄位資料。"
+    # Prepare chat history to show the user's message
+    file_type = classify_uploaded_file(file_upload) if file_upload else 'none'
+    file_name = os.path.basename(file_upload) if file_upload else ""
 
-    yield "", "⏳ Initializing Agent...", ""
+    user_display = query
+    if file_upload:
+        icon = "🖼️" if file_type == 'image' else "📄"
+        user_display = f"{icon} [{file_name}]\n\n{query}"
+
+    chatbot_history.append([user_display, "⏳ Initializing Agent..."])
+    yield chatbot_history, "⏳ Initializing Agent...", ""
+
+    # ── Persistent Memory: load context BEFORE creating agent ────────────
+    persistent_context = memory_store.get_session_start_context(session_key)
+    effective_system_prompt = system_prompt
+    if persistent_context:
+        effective_system_prompt = system_prompt + persistent_context
+
     try:
-        agent = create_dynamic_agent(provider, api_url, model_name, system_prompt)
+        agent = create_dynamic_agent(provider, api_url, model_name, effective_system_prompt)
     except Exception as e:
-        yield f"Error creating agent: {e}", "", ""
+        chatbot_history[-1][1] = f"Error creating agent: {e}"
+        yield chatbot_history, "", ""
         return
 
     message_content = [{"type": "text", "text": query}]
 
-    if image:
-        yield "", "⏳ Encoding Image...", ""
-        base64_image = encode_image(image, max_size=int(image_max_size))
-        if base64_image:
-            message_content.append({
-                "type": "image_url", 
-                "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
-            })
-        else:
-            yield "Failed to encode image.", "", ""
-            return
+    # ── 選擇檔案處理模式 ──────────────────────────────────────────────────
+    if file_upload:
+        if file_type == 'image':
+            # 圖片：base64 內嵌送入 multimodal 模型
+            chatbot_history[-1][1] = "⏳ Encoding Image..."
+            yield chatbot_history, "⏳ Encoding Image...", ""
+            base64_image = encode_image(file_upload, max_size=int(image_max_size))
+            if base64_image:
+                message_content.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
+                })
+            else:
+                chatbot_history[-1][1] = "Failed to encode image."
+                yield chatbot_history, "Failed to encode image.", ""
+                return
 
+        elif file_type == 'text':
+            # 文字檔：直接讀內容嵌進 message
+            chatbot_history[-1][1] = "⏳ Reading file..."
+            yield chatbot_history, "⏳ Reading file...", ""
+            try:
+                with open(file_upload, "r", encoding="utf-8", errors="replace") as f:
+                    file_text = f.read()
+                file_preview = file_text[:8000]  # 超長則裁短，提醒用 map_reduce skill
+                truncated = len(file_text) > 8000
+                note = f"\n\n⚠️ 檔案過長（{len(file_text):,} 字元），內容已裁切至前 8000 字元。建議使用 map_reduce skill 處理完整內容。" if truncated else ""
+                embedded = f"\n\n以下是上傳檔案 [{file_name}] 的內容：\n```\n{file_preview}\n```{note}"
+                # 將檔案內容嵌入文字訊息
+                message_content[0]["text"] = query + embedded
+            except Exception as e:
+                chatbot_history[-1][1] = f"Failed to read file: {e}"
+                yield chatbot_history, f"Failed to read file: {e}", ""
+                return
+
+        else:  # binary: pdf, pptx, xlsx 等
+            # 將檔案路徑告知 agent，讓它透過 skill 處理
+            embedded = (
+                f"\n\n使用者上傳了檔案：**{file_name}**（完整路徑：`{file_upload}`）\n"
+                f"檔案類型：`{os.path.splitext(file_name)[1]}`\n"
+                f"請使用適合的 skill（如 pdf、pptx、map_reduce 等）處理此檔案。"
+            )
+            message_content[0]["text"] = query + embedded
+
+    # ── Persistent Memory: use session_key as LangGraph thread_id ──────────
+    # Same key → same LangGraph checkpoint (working memory) +
+    #            same persistent JSON (long-term summary)
     config = {
-        "configurable": {"thread_id": str(uuid.uuid4())},
+        "configurable": {"thread_id": session_key},
         "recursion_limit": int(max_agent_steps),  # prevent infinite loops
     }
 
-    # Extract the system prompt used by the agent to display to the user
-    # Langchain Agent executor hides the exact final prompt easily, but we know the middleware ran.
-    # To get the exact system prompt, we can use the skill_repo's injected logic wrapper:
-    final_system_prompt = system_prompt
+    # ── Build final_system_prompt for UI display ───────────────────────────
+    # This is what we show in the "Actual Injected System Prompt" text box.
+    # The agent already has this via effective_system_prompt + middleware.
+    final_system_prompt = effective_system_prompt
     if SkillMiddleware:
-        # Construct what the middleware actually appends
         mw = SkillMiddleware()
-        final_system_prompt += "\n" + mw.skills_prompt if hasattr(mw, 'skills_prompt') else ""
         skills_addendum = (
             "\n\n"
             "================================================================\n"
@@ -272,7 +447,7 @@ def run_ocr_task(image, provider, api_url, model_name, image_max_size, max_agent
             "      Example: run_python_code(\"from reportlab.pdfgen import canvas\\nc = canvas.Canvas('out.pdf')\\n...\", 'C:/output')\n"
             "================================================================"
         )
-        final_system_prompt = system_prompt + skills_addendum
+        final_system_prompt = effective_system_prompt + skills_addendum
 
     log_lines = ["⏳ Running Inference (this may take a while)..."]
     current_output = ""
@@ -283,7 +458,8 @@ def run_ocr_task(image, provider, api_url, model_name, image_max_size, max_agent
     _dup_count: int = 0
     MAX_DUP_CALLS = 3  # abort if same tool+args called this many times in a row
 
-    yield current_output, "\n\n".join(log_lines), final_system_prompt
+    chatbot_history[-1][1] = current_output if current_output else "⏳ Running Inference..."
+    yield chatbot_history, "\n\n".join(log_lines), final_system_prompt
 
     try:
         for update in agent.stream(
@@ -320,7 +496,8 @@ def run_ocr_task(image, provider, api_url, model_name, image_max_size, max_agent
                                         f"Stopping to prevent infinite loop."
                                     )
                                     log_lines.append(warn)
-                                    yield current_output, "\n\n".join(log_lines), final_system_prompt
+                                    chatbot_history[-1][1] = current_output if current_output else warn
+                                    yield chatbot_history, "\n\n".join(log_lines), final_system_prompt
                                     return
 
                                 log_lines.append(f"🔧 Calling Tool: {name} (args: {args})")
@@ -330,29 +507,28 @@ def run_ocr_task(image, provider, api_url, model_name, image_max_size, max_agent
                                 log_lines.append(f"🤖 AI Thinking:\n{content}")
                             else:
                                 # ---- Text-format tool_call fallback ----
-                                # Some models emit <tool_call>...</tool_call> as plain text.
-                                # Detect, execute, and log them before treating as final answer.
                                 executed, remaining = _try_execute_text_tool_calls(content, log_lines)
                                 if executed:
-                                    # Tools ran — log any leftover reasoning text
                                     if remaining:
                                         log_lines.append(f"🤖 AI Thinking (after tool):\n{remaining}")
                                 else:
-                                    # No tool_call blocks — genuine final answer
                                     log_lines.append(f"🤖 Final Answer:\n{content}")
                                     current_output = content
 
-                        yield current_output, "\n\n".join(log_lines), final_system_prompt
+                        if current_output:
+                            chatbot_history[-1][1] = current_output
+                        yield chatbot_history, "\n\n".join(log_lines), final_system_prompt
 
                     elif msg_type == "tool":
                         tool_name = getattr(msg, "name", "tool")
                         tool_content = getattr(msg, "content", "")
                         log_lines.append(f"✅ Tool Output ({tool_name}):\n{tool_content}")
-                        yield current_output, "\n\n".join(log_lines), final_system_prompt
+                        if current_output:
+                            chatbot_history[-1][1] = current_output
+                        yield chatbot_history, "\n\n".join(log_lines), final_system_prompt
 
     except Exception as e:
         err_msg = str(e)
-        # LangGraph raises GraphRecursionError when recursion_limit is hit
         if "recursion" in err_msg.lower() or "GraphRecursion" in err_msg:
             log_lines.append(
                 f"\n⚠️  Agent exceeded max steps ({max_agent_steps}). "
@@ -360,11 +536,56 @@ def run_ocr_task(image, provider, api_url, model_name, image_max_size, max_agent
             )
         else:
             log_lines.append(f"\n❌ Error: {err_msg}")
-            current_output = f"inference failed: {err_msg}"
-        yield current_output, "\n\n".join(log_lines), final_system_prompt
+            current_output += f"\n\ninference failed: {err_msg}"
+        chatbot_history[-1][1] = current_output if current_output else err_msg
+        yield chatbot_history, "\n\n".join(log_lines), final_system_prompt
         return
 
-    yield current_output, "\n\n".join(log_lines), final_system_prompt
+    final_answer = current_output if current_output else "Finished without generating response."
+    chatbot_history[-1][1] = final_answer
+
+    # ── Persistent Memory: record this turn → may trigger rolling summarise ─
+    try:
+        # Build a lightweight LLM summariser using the same model just used
+        _llm_for_summary = None
+        try:
+            from langchain_openai import ChatOpenAI as _ChatOpenAI
+            base_url = api_url if api_url.endswith("/v1") else f"{api_url}/v1"
+            _api_key = "ollama" if provider == "Ollama" else "EMPTY"
+            _llm_for_summary = _ChatOpenAI(
+                model=model_name,
+                api_key=_api_key,
+                base_url=base_url,
+                temperature=0,
+            )
+        except Exception:
+            pass
+
+        _summariser = make_llm_summariser(_llm_for_summary) if _llm_for_summary else None
+        # Strip image data from user message before storing
+        stored_user_msg = query  # text only
+        updated_mem = memory_store.record_turn(
+            session_key=session_key,
+            user_message=stored_user_msg,
+            ai_message=final_answer,
+            llm_summariser=_summariser,
+        )
+        log_lines.append(f"💾 Memory saved → session_key: {session_key}")
+
+        # ── InMemorySaver 修剪：如果刚才觸發了摘要，同步裁掉舊訊息 ─────────
+        # 防止層 2（InMemorySaver）的 messages[] 無限堤積
+        if updated_mem.summary and updated_mem.last_summarised_at_turn == updated_mem.turn_count:
+            pruned = prune_checkpointer(
+                checkpointer=global_checkpointer,
+                session_key=session_key,
+                summary=updated_mem.summary,
+            )
+            if pruned:
+                log_lines.append("✂️ InMemorySaver 記憶已裁切，與摘要同步")
+    except Exception as mem_err:
+        log_lines.append(f"⚠️ Memory save failed: {mem_err}")
+
+    yield chatbot_history, "\n\n".join(log_lines), final_system_prompt
 
 
 # --- Skill Editor Handlers ---
@@ -520,16 +741,22 @@ def create_new_file(skill_name, new_file_name):
 
 # --- GUI Construction ---
 
-with gr.Blocks(title="Agentic OCR Studio", css="footer {visibility: hidden}") as demo:
-    gr.Markdown("# 🕵️‍♂️ Agentic OCR Studio")
+with gr.Blocks(title="Agentic Studio", css="footer {visibility: hidden}") as demo:
+    gr.Markdown("# 🤖 Agentic Studio")
     
     with gr.Tabs():
-        # --- TAB 1: OCR ---
-        with gr.Tab("🖼️ OCR & Inference"):
+        # --- TAB 1: Agent ---
+        with gr.Tab("🤖 Agent"):
             with gr.Row():
                 with gr.Column(scale=1):
-                    # Image Input
-                    image_input = gr.Image(type="filepath", label="Upload Image", height=400)
+                    # 檔案輸入（任意類型）
+                    file_input = gr.File(
+                        label="📂 Upload File (image / PDF / PPT / CSV / TXT ...)",
+                        file_count="single",
+                        file_types=None,   # None = 任意檔案
+                        height=160,
+                    )
+                    image_input = file_input   # alias 保留，方便現有綁定參考
                     
                     # Settings
                     with gr.Group():
@@ -541,14 +768,14 @@ with gr.Blocks(title="Agentic OCR Studio", css="footer {visibility: hidden}") as
                             model_dropdown = gr.Dropdown(label="Select Model", interactive=True, scale=3, allow_custom_value=True)
                             refresh_btn = gr.Button("🔄 Refresh", scale=1)
                         
-                        gr.Markdown("### 🖼️ Image Settings")
+                        gr.Markdown("### 🖼️ 圖片磁種設定（僅對圖片檔案有效）")
                         image_max_size_slider = gr.Slider(
                             minimum=256,
                             maximum=4096,
                             value=1024,
                             step=128,
-                            label="Image Max Size (px)",
-                            info="限制圖片最長邊的像素數，數值越小 token 用量越少，適用於輸入限制較嚴的模型"
+                            label="圖片最大邊長 (px)",
+                            info="對非圖片檔案無效。數值越小 token 用量越少"
                         )
 
                         gr.Markdown("### 🤖 Agent Settings")
@@ -563,36 +790,91 @@ with gr.Blocks(title="Agentic OCR Studio", css="footer {visibility: hidden}") as
 
                         with gr.Accordion("📝 Prompt Settings", open=True):
                             system_prompt_input = gr.TextArea(
-                                label="System Prompt", 
+                                label="System Prompt",
                                 value="You are an intelligent assistant with access to a library of capabilities (skills). Use them to help the user.",
                                 lines=3
                             )
-                            user_prompt_input = gr.TextArea(
-                                label="User Query", 
-                                value="請幫我提取這張單據的資料，請自行判斷是哪一類單據，然後依照其種類去提取相對應的欄位資料。",
-                                lines=3
-                            )
+
+                    # User Query 常駐展示，預設空白
+                    user_prompt_input = gr.TextArea(
+                        label="💬 User Query",
+                        value="",
+                        placeholder="請輸入指令或問題（不填則由 agent 自定義默認回覆）",
+                        lines=3
+                    )
                 
                 with gr.Column(scale=1):
                     # Output
                     gr.Markdown("### 📝 Output")
-                    output_text = gr.Textbox(label="Agent Response", lines=10, interactive=False)
+
+                    with gr.Group():
+                        gr.Markdown("### 🔑 Session Key (持久記憶識別碼)")
+                        session_key_input = gr.Textbox(
+                            label="Session Key",
+                            value="user:anonymous:thread:main",
+                            placeholder="user:alice:thread:invoice-project",
+                            interactive=True,
+                            info="相同 key = 接續舊記憶。格式: user:{id}:thread:{name} 或 group:{channel}"
+                        )
+                        with gr.Row():
+                            session_key_preset = gr.Dropdown(
+                                label="快速選擇預設 Key",
+                                choices=SESSION_KEY_PRESETS,
+                                interactive=True,
+                                scale=3,
+                            )
+                            apply_preset_btn = gr.Button("套用", scale=1)
+
+                    chatbot = gr.Chatbot(label="Chat History", height=400)
                     log_output = gr.Textbox(label="Thinking Process & Logs", lines=10, interactive=False)
                     final_system_prompt_output = gr.Textbox(label="Actual Injected System Prompt", lines=8, interactive=False)
                     with gr.Row():
-                        run_btn = gr.Button("🚀 Run OCR Analysis", variant="primary", scale=3)
+                        run_btn = gr.Button("🚀 Send / Run Task", variant="primary", scale=3)
                         stop_btn = gr.Button("⏹️ Stop", variant="stop", scale=1)
+                        clear_btn = gr.Button("🗑️ Clear Chat (保留記憶)", scale=1)
             
             # Event Wiring
             refresh_btn.click(refresh_models, inputs=[provider_dropdown, api_url_input], outputs=model_dropdown)
+
+            # Apply preset session key
+            apply_preset_btn.click(
+                fn=lambda v: v,
+                inputs=[session_key_preset],
+                outputs=[session_key_input],
+            )
             
-            # Auto-refresh on provider change (optional, maybe better explicit)
-            # provider_dropdown.change(refresh_models, inputs=[provider_dropdown, api_url_input], outputs=model_dropdown)
+            # Clear Chat History but keep persistent memory (just reset working memory)
+            def clear_session_history(current_key, current_provider, current_url, current_model):
+                """Reset the chat display. Persistent memory in data/memory/ is NOT deleted.
+                The next message on the same key will still load the old summary.
+                """
+                import threading
+                # Flush current working memory to persistent layer in background
+                try:
+                    base_url = current_url if current_url.endswith("/v1") else f"{current_url}/v1"
+                    _api_key = "ollama" if current_provider == "Ollama" else "EMPTY"
+                    from langchain_openai import ChatOpenAI as _ChatOpenAI
+                    _llm = _ChatOpenAI(model=current_model or "__none__", api_key=_api_key, base_url=base_url, temperature=0)
+                    _summariser = make_llm_summariser(_llm)
+                    memory_store.flush_session(current_key, _summariser)
+                except Exception:
+                    memory_store.flush_session(current_key)  # flush without summarising
+                return [], None, "", ""
+                
+            clear_btn.click(
+                clear_session_history,
+                inputs=[session_key_input, provider_dropdown, api_url_input, model_dropdown],
+                outputs=[chatbot, file_input, log_output, final_system_prompt_output]
+            )
 
             run_event = run_btn.click(
-                run_ocr_task,
-                inputs=[image_input, provider_dropdown, api_url_input, model_dropdown, image_max_size_slider, max_agent_steps_slider, system_prompt_input, user_prompt_input],
-                outputs=[output_text, log_output, final_system_prompt_output],
+                run_agent_task,
+                inputs=[
+                    file_input, provider_dropdown, api_url_input, model_dropdown,
+                    image_max_size_slider, max_agent_steps_slider, system_prompt_input,
+                    user_prompt_input, chatbot, session_key_input
+                ],
+                outputs=[chatbot, log_output, final_system_prompt_output],
             )
             # Stop button cancels the running generator immediately
             stop_btn.click(fn=None, cancels=[run_event])
@@ -648,6 +930,85 @@ with gr.Blocks(title="Agentic OCR Studio", css="footer {visibility: hidden}") as
                 inputs=[new_skill_name], 
                 outputs=[create_status, skill_select, file_select, skill_content]
             )
+
+        # --- TAB 3: MEMORY MANAGER ---
+        with gr.Tab("🧠 Memory Manager"):
+            gr.Markdown(
+                "## 🧠 持久記憶管理\n\n"
+                "查看所有已儲存的 Session 記憶。同一個 Session Key = 同一份記憶，跨裝置、跨 session 都能接續。\n\n"
+                f"📁 存放路徑：`data/memory/`　　🔄 每 **{SUMMARY_EVERY_N_TURNS}** 輪自動壓縮一次摘要"
+            )
+            with gr.Row():
+                refresh_mem_btn = gr.Button("🔄 重新整理記憶列表", variant="primary")
+                mem_key_to_delete = gr.Textbox(label="輸入要刪除的 Session Key", scale=3)
+                delete_mem_btn = gr.Button("🗑️ 刪除此記憶", variant="stop")
+
+            mem_status = gr.Markdown()
+            mem_table = gr.Dataframe(
+                headers=["Session Key", "輪數", "摘要長度", "最後更新", "摘要預覽"],
+                label="所有 Thread 記憶",
+                interactive=False,
+                wrap=True,
+            )
+            mem_detail = gr.TextArea(label="📖 摘要完整內容（點選後貼上 Session Key 查詢）", lines=10, interactive=False)
+            mem_key_inspect = gr.Textbox(label="查詢 Session Key（輸入後按 Enter）")
+
+            def list_memories():
+                threads = memory_store.list_threads()
+                if not threads:
+                    return [["(尚無記憶)", "-", "-", "-", "-"]]
+                rows = []
+                for t in threads:
+                    summary_preview = (t.summary[:80] + "…") if len(t.summary) > 80 else (t.summary or "(無)")
+                    rows.append([
+                        t.session_key,
+                        str(t.turn_count),
+                        str(len(t.summary)),
+                        t.last_updated_at[:16].replace("T", " "),
+                        summary_preview,
+                    ])
+                return rows
+
+            def inspect_memory(key):
+                if not key:
+                    return "(請輸入 Session Key)"
+                mem = memory_store.load_thread(key.strip())
+                if not mem.summary and not mem.recent_messages:
+                    return f"找不到 key='{key.strip()}' 的記憶，或該 key 尚無內容。"
+                lines = [
+                    f"🔑 Session Key: {mem.session_key}",
+                    f"📊 總輪數: {mem.turn_count}　最後摘要於第 {mem.last_summarised_at_turn} 輪",
+                    f"🕐 建立: {mem.created_at[:16]}　更新: {mem.last_updated_at[:16]}",
+                    "",
+                    "─── 摘要 ───",
+                    mem.summary or "(無)",
+                    "",
+                    "─── 最近幾輪對話 ───",
+                ]
+                for m in mem.recent_messages[-6:]:
+                    role = "👤 使用者" if m.get("role") == "user" else "🤖 AI"
+                    lines.append(f"{role}: {m.get('content', '')[:200]}")
+                return "\n".join(lines)
+
+            def delete_memory(key):
+                if not key:
+                    return "請輸入要刪除的 Session Key。"
+                deleted = memory_store.delete_thread(key.strip())
+                if deleted:
+                    return f"✅ 已刪除 key='{key.strip()}' 的記憶。"
+                return f"⚠️ 找不到 key='{key.strip()}'，無需刪除。"
+
+            # Wire events
+            refresh_mem_btn.click(list_memories, outputs=mem_table)
+            mem_key_inspect.submit(inspect_memory, inputs=mem_key_inspect, outputs=mem_detail)
+            delete_mem_btn.click(
+                lambda key: (delete_memory(key), list_memories()),
+                inputs=mem_key_to_delete,
+                outputs=[mem_status, mem_table],
+            )
+
+            # Auto-load on tab render
+            demo.load(list_memories, outputs=mem_table)
 
 if __name__ == "__main__":
     demo.launch(server_name="0.0.0.0", server_port=7860, share=False)
