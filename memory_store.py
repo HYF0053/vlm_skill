@@ -44,7 +44,7 @@ import threading
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Generator
 
 # ---------------------------------------------------------------------------
 # Config
@@ -313,7 +313,7 @@ class MemoryStore:
         ai_message: str,
         llm_summariser: Optional[Callable[[str, str], str]] = None,
         force_summarise: bool = False,
-    ) -> ThreadMemory:
+    ) -> Generator[str, None, ThreadMemory]:
         """
         Record a completed turn (user + ai) to the thread memory.
 
@@ -370,6 +370,7 @@ class MemoryStore:
             reason = "forced" if force_summarise else (
                 f"turns={turns_since_last}" if trigger_by_turns else f"chars={total_chars}"
             )
+            yield f"正在進行對話摘要壓縮 ({reason})..."
             print(f"[MemoryStore] Summarising ({reason}) key={session_key}")
             new_summary = self._run_summarisation(mem, llm_summariser)  # type: ignore[arg-type]
             if new_summary:
@@ -378,6 +379,7 @@ class MemoryStore:
         # ──────────────────────────────────────────────────────────────────
 
         self.save_thread(mem)
+        yield "長期記憶已儲存。"
         return mem
 
     def _run_summarisation(
@@ -531,7 +533,7 @@ def prune_checkpointer(
     session_key: str,
     summary: str,
     keep_recent_turns: int = KEEP_RECENT_TURNS_IN_MEMORY,
-) -> bool:
+) -> Generator[str, None, bool]:
     """
     修剪 LangGraph InMemorySaver，避免 context window 爆炸。
 
@@ -551,6 +553,7 @@ def prune_checkpointer(
     Returns True if any messages were pruned, False otherwise.
     """
     try:
+        yield "正在進行 InMemorySaver 訊息修剪 (Pruning)..."
         from langchain_core.messages import RemoveMessage, SystemMessage, HumanMessage, AIMessage
 
         config = {"configurable": {"thread_id": session_key}}
@@ -617,7 +620,9 @@ def prune_checkpointer(
         checkpointer.put(config, checkpoint_copy, metadata, {})  # type: ignore[arg-type]
 
         pruned_count = len(to_delete)
-        print(f"[MemoryStore] Pruned {pruned_count} old messages from InMemorySaver (key={session_key})")
+        msg = f"已從 InMemorySaver 修剪 {pruned_count} 則舊訊息 (與摘要同步)"
+        print(f"[MemoryStore] {msg} (key={session_key})")
+        yield msg
         return True
 
     except Exception as e:

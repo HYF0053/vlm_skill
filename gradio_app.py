@@ -564,24 +564,39 @@ def run_agent_task(file_upload, provider, api_url, model_name, image_max_size, m
         _summariser = make_llm_summariser(_llm_for_summary) if _llm_for_summary else None
         # Strip image data from user message before storing
         stored_user_msg = query  # text only
-        updated_mem = memory_store.record_turn(
+        
+        # 使用 Generator 方式來顯示記憶操作進度
+        gen_record = memory_store.record_turn(
             session_key=session_key,
             user_message=stored_user_msg,
             ai_message=final_answer,
             llm_summariser=_summariser,
         )
-        log_lines.append(f"💾 Memory saved → session_key: {session_key}")
+        
+        updated_mem = None
+        try:
+            while True:
+                status = next(gen_record)
+                log_lines.append(f"🧠 [記憶管理] {status}")
+                yield chatbot_history, "\n\n".join(log_lines), final_system_prompt
+        except StopIteration as e:
+            updated_mem = e.value
 
-        # ── InMemorySaver 修剪：如果刚才觸發了摘要，同步裁掉舊訊息 ─────────
-        # 防止層 2（InMemorySaver）的 messages[] 無限堤積
-        if updated_mem.summary and updated_mem.last_summarised_at_turn == updated_mem.turn_count:
-            pruned = prune_checkpointer(
+        # ── InMemorySaver 修剪：如果剛才觸發了摘要，同步裁掉舊訊息 ─────────
+        # 防止層 2（InMemorySaver）的 messages[] 無限累積
+        if updated_mem and updated_mem.summary and updated_mem.last_summarised_at_turn == updated_mem.turn_count:
+            gen_prune = prune_checkpointer(
                 checkpointer=global_checkpointer,
                 session_key=session_key,
                 summary=updated_mem.summary,
             )
-            if pruned:
-                log_lines.append("✂️ InMemorySaver 記憶已裁切，與摘要同步")
+            try:
+                while True:
+                    status = next(gen_prune)
+                    log_lines.append(f"✂️ [記憶管理] {status}")
+                    yield chatbot_history, "\n\n".join(log_lines), final_system_prompt
+            except StopIteration:
+                pass
     except Exception as mem_err:
         log_lines.append(f"⚠️ Memory save failed: {mem_err}")
 
@@ -747,137 +762,138 @@ with gr.Blocks(title="Agentic Studio", css="footer {visibility: hidden}") as dem
     with gr.Tabs():
         # --- TAB 1: Agent ---
         with gr.Tab("🤖 Agent"):
+            # --- 1. Session Key (Top) ---
+            with gr.Group():
+                gr.Markdown("### 🔑 Session Key (持久記憶識別碼)")
+                with gr.Row():
+                    session_key_input = gr.Textbox(
+                        label="Session Key",
+                        value="user:anonymous:thread:main",
+                        placeholder="user:alice:thread:invoice-project",
+                        interactive=True,
+                        scale=4,
+                        info="相同 key = 接續舊記憶。格式: user:{id}:thread:{name} 或 group:{channel}"
+                    )
+                    session_key_preset = gr.Dropdown(
+                        label="快速選擇預設",
+                        choices=SESSION_KEY_PRESETS,
+                        interactive=True,
+                        scale=2,
+                    )
+                    apply_preset_btn = gr.Button("套用", scale=1)
+
+            # --- 2. Chat (Below Session Key) ---
+            chatbot = gr.Chatbot(label="Chat History", height=500)
+
+            # --- 3. Prompts & Upload (Below Chat, each single line) ---
+            with gr.Accordion("📝 System Prompt Settings", open=False):
+                system_prompt_input = gr.TextArea(
+                    label="System Prompt",
+                    value="You are an intelligent assistant with access to a library of capabilities (skills). Use them to help the user.",
+                    lines=3
+                )
+
+            user_prompt_input = gr.TextArea(
+                label="💬 User Query",
+                value="",
+                placeholder="請輸入指令或問題（不填則由 agent 自定義默認回覆）",
+                lines=3
+            )
+
+            file_input = gr.File(
+                label="📂 Upload File (image / PDF / PPT / CSV / TXT ...)",
+                file_count="single",
+                file_types=None,
+                height=100,
+            )
+            image_input = file_input # alias
+
+            # --- 4. Controls ---
             with gr.Row():
-                with gr.Column(scale=1):
-                    # 檔案輸入（任意類型）
-                    file_input = gr.File(
-                        label="📂 Upload File (image / PDF / PPT / CSV / TXT ...)",
-                        file_count="single",
-                        file_types=None,   # None = 任意檔案
-                        height=160,
-                    )
-                    image_input = file_input   # alias 保留，方便現有綁定參考
-                    
-                    # Settings
-                    with gr.Group():
-                        gr.Markdown("### ⚙️ Model Settings")
-                        provider_dropdown = gr.Dropdown(choices=["Ollama", "vLLM"], value="vLLM", label="Provider")
-                        api_url_input = gr.Textbox(value="http://10.1.1.7:9000", label="API URL")
-                        
-                        with gr.Row():
-                            model_dropdown = gr.Dropdown(label="Select Model", interactive=True, scale=3, allow_custom_value=True)
-                            refresh_btn = gr.Button("🔄 Refresh", scale=1)
-                        
-                        gr.Markdown("### 🖼️ 圖片磁種設定（僅對圖片檔案有效）")
-                        image_max_size_slider = gr.Slider(
-                            minimum=256,
-                            maximum=4096,
-                            value=1024,
-                            step=128,
-                            label="圖片最大邊長 (px)",
-                            info="對非圖片檔案無效。數值越小 token 用量越少"
-                        )
+                run_btn = gr.Button("🚀 Send / Run Task", variant="primary", scale=3)
+                stop_btn = gr.Button("⏹️ Stop", variant="stop", scale=1)
+                clear_btn = gr.Button("🗑️ Clear Chat (保留工作記憶)", scale=1)
 
-                        gr.Markdown("### 🤖 Agent Settings")
-                        max_agent_steps_slider = gr.Slider(
-                            minimum=1,
-                            maximum=50,
-                            value=15,
-                            step=1,
-                            label="Max Agent Steps",
-                            info="限制 Agent 思考與呼叫工具的最大次數，防止無限迴圈"
-                        )
+            # --- 5. Thinking Logs (Bottom) ---
+            log_output = gr.Textbox(label="Thinking Process & Logs", lines=10, interactive=False)
 
-                        with gr.Accordion("📝 Prompt Settings", open=True):
-                            system_prompt_input = gr.TextArea(
-                                label="System Prompt",
-                                value="You are an intelligent assistant with access to a library of capabilities (skills). Use them to help the user.",
-                                lines=3
-                            )
-
-                    # User Query 常駐展示，預設空白
-                    user_prompt_input = gr.TextArea(
-                        label="💬 User Query",
-                        value="",
-                        placeholder="請輸入指令或問題（不填則由 agent 自定義默認回覆）",
-                        lines=3
-                    )
-                
-                with gr.Column(scale=1):
-                    # Output
-                    gr.Markdown("### 📝 Output")
-
-                    with gr.Group():
-                        gr.Markdown("### 🔑 Session Key (持久記憶識別碼)")
-                        session_key_input = gr.Textbox(
-                            label="Session Key",
-                            value="user:anonymous:thread:main",
-                            placeholder="user:alice:thread:invoice-project",
-                            interactive=True,
-                            info="相同 key = 接續舊記憶。格式: user:{id}:thread:{name} 或 group:{channel}"
-                        )
-                        with gr.Row():
-                            session_key_preset = gr.Dropdown(
-                                label="快速選擇預設 Key",
-                                choices=SESSION_KEY_PRESETS,
-                                interactive=True,
-                                scale=3,
-                            )
-                            apply_preset_btn = gr.Button("套用", scale=1)
-
-                    chatbot = gr.Chatbot(label="Chat History", height=400)
-                    log_output = gr.Textbox(label="Thinking Process & Logs", lines=10, interactive=False)
-                    final_system_prompt_output = gr.Textbox(label="Actual Injected System Prompt", lines=8, interactive=False)
+        # --- TAB 2: Settings ---
+        with gr.Tab("⚙️ Settings"):
+            gr.Markdown("### ⚙️ Model & Agent Configuration")
+            with gr.Row():
+                with gr.Column():
+                    provider_dropdown = gr.Dropdown(choices=["Ollama", "vLLM"], value="vLLM", label="Provider")
+                    api_url_input = gr.Textbox(value="http://10.1.1.7:9000", label="API URL")
                     with gr.Row():
-                        run_btn = gr.Button("🚀 Send / Run Task", variant="primary", scale=3)
-                        stop_btn = gr.Button("⏹️ Stop", variant="stop", scale=1)
-                        clear_btn = gr.Button("🗑️ Clear Chat (保留記憶)", scale=1)
-            
-            # Event Wiring
-            refresh_btn.click(refresh_models, inputs=[provider_dropdown, api_url_input], outputs=model_dropdown)
-
-            # Apply preset session key
-            apply_preset_btn.click(
-                fn=lambda v: v,
-                inputs=[session_key_preset],
-                outputs=[session_key_input],
-            )
-            
-            # Clear Chat History but keep persistent memory (just reset working memory)
-            def clear_session_history(current_key, current_provider, current_url, current_model):
-                """Reset the chat display. Persistent memory in data/memory/ is NOT deleted.
-                The next message on the same key will still load the old summary.
-                """
-                import threading
-                # Flush current working memory to persistent layer in background
-                try:
-                    base_url = current_url if current_url.endswith("/v1") else f"{current_url}/v1"
-                    _api_key = "ollama" if current_provider == "Ollama" else "EMPTY"
-                    from langchain_openai import ChatOpenAI as _ChatOpenAI
-                    _llm = _ChatOpenAI(model=current_model or "__none__", api_key=_api_key, base_url=base_url, temperature=0)
-                    _summariser = make_llm_summariser(_llm)
-                    memory_store.flush_session(current_key, _summariser)
-                except Exception:
-                    memory_store.flush_session(current_key)  # flush without summarising
-                return [], None, "", ""
+                        model_dropdown = gr.Dropdown(label="Select Model", interactive=True, scale=3, allow_custom_value=True)
+                        refresh_btn = gr.Button("🔄 Refresh", scale=1)
                 
-            clear_btn.click(
-                clear_session_history,
-                inputs=[session_key_input, provider_dropdown, api_url_input, model_dropdown],
-                outputs=[chatbot, file_input, log_output, final_system_prompt_output]
-            )
+                with gr.Column():
+                    gr.Markdown("### 🤖 Execution Settings")
+                    max_agent_steps_slider = gr.Slider(
+                        minimum=1,
+                        maximum=50,
+                        value=15,
+                        step=1,
+                        label="Max Agent Steps",
+                        info="限制 Agent 思考與呼叫工具的最大次數"
+                    )
+                    image_max_size_slider = gr.Slider(
+                        minimum=256,
+                        maximum=4096,
+                        value=1024,
+                        step=128,
+                        label="圖片最大邊長 (px)",
+                        info="僅對圖片有效，數值越小 token 用量越少"
+                    )
+            
+            final_system_prompt_output = gr.Textbox(label="Actual Injected System Prompt (ReadOnly)", lines=12, interactive=False)
 
-            run_event = run_btn.click(
-                run_agent_task,
-                inputs=[
-                    file_input, provider_dropdown, api_url_input, model_dropdown,
-                    image_max_size_slider, max_agent_steps_slider, system_prompt_input,
-                    user_prompt_input, chatbot, session_key_input
-                ],
-                outputs=[chatbot, log_output, final_system_prompt_output],
-            )
-            # Stop button cancels the running generator immediately
-            stop_btn.click(fn=None, cancels=[run_event])
+        # --- Event Wiring for Agent ---
+        refresh_btn.click(refresh_models, inputs=[provider_dropdown, api_url_input], outputs=model_dropdown)
+
+        # Apply preset session key
+        apply_preset_btn.click(
+            fn=lambda v: v,
+            inputs=[session_key_preset],
+            outputs=[session_key_input],
+        )
+        
+        # Clear Chat History but keep persistent memory (just reset working memory)
+        def clear_session_history(current_key, current_provider, current_url, current_model):
+            """Reset the chat display. Persistent memory in data/memory/ is NOT deleted.
+            The next message on the same key will still load the old summary.
+            """
+            import threading
+            # Flush current working memory to persistent layer in background
+            try:
+                base_url = current_url if current_url.endswith("/v1") else f"{current_url}/v1"
+                _api_key = "ollama" if current_provider == "Ollama" else "EMPTY"
+                from langchain_openai import ChatOpenAI as _ChatOpenAI
+                _llm = _ChatOpenAI(model=current_model or "__none__", api_key=_api_key, base_url=base_url, temperature=0)
+                _summariser = make_llm_summariser(_llm)
+                memory_store.flush_session(current_key, _summariser)
+            except Exception:
+                memory_store.flush_session(current_key)  # flush without summarising
+            return [], None, "", ""
+            
+        clear_btn.click(
+            clear_session_history,
+            inputs=[session_key_input, provider_dropdown, api_url_input, model_dropdown],
+            outputs=[chatbot, file_input, log_output, final_system_prompt_output]
+        )
+
+        run_event = run_btn.click(
+            run_agent_task,
+            inputs=[
+                file_input, provider_dropdown, api_url_input, model_dropdown,
+                image_max_size_slider, max_agent_steps_slider, system_prompt_input,
+                user_prompt_input, chatbot, session_key_input
+            ],
+            outputs=[chatbot, log_output, final_system_prompt_output],
+        )
+        # Stop button cancels the running generator immediately
+        stop_btn.click(fn=None, cancels=[run_event])
 
         # --- TAB 2: SKILLS ---
         with gr.Tab("📚 Skill Manager"):
