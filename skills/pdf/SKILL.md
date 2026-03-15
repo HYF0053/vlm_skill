@@ -10,6 +10,43 @@ license: Proprietary. LICENSE.txt has complete terms
 
 This guide covers essential PDF processing operations using Python libraries and command-line tools. For advanced features, JavaScript libraries, and detailed examples, see REFERENCE.md. If you need to fill out a PDF form, read FORMS.md and follow its instructions.
 
+## Non-English Characters & Encoding
+
+When working with PDF files containing non-English characters (e.g., Chinese, Japanese, Korean):
+
+1. **File I/O**: Always specify `encoding="utf-8"` when reading or writing text files. This is especially important on Windows systems where the default encoding is often NOT UTF-8.
+   ```python
+   with open("output.txt", "w", encoding="utf-8") as f:
+       f.write(text)
+   ```
+   When reading:
+   ```python
+   with open("input.txt", "r", encoding="utf-8", errors="replace") as f:
+       content = f.read()
+   ```
+
+2. **JSON**: When saving extracted information to JSON, use `ensure_ascii=False` to preserve non-English characters.
+   ```python
+   import json
+   with open("data.json", "w", encoding="utf-8") as f:
+       json.dump(data, f, indent=2, ensure_ascii=False)
+   ```
+
+3. **ReportLab Fonts**: The default fonts in ReportLab (Helvetica, Times, Courier) ONLY support Latin-1 characters. To use Chinese or other characters, you MUST register a TrueType font:
+   ```python
+   from reportlab.pdfmetrics import registerFont
+   from reportlab.pdfbase.ttfonts import TTFont
+   from reportlab.lib.styles import getSampleStyleSheet
+
+   # Register a font (ensure the .ttf file is available)
+   # Common Windows font: C:\Windows\Fonts\msyh.ttf (Microsoft YaHei)
+   # Note: You may need to copy the font file to your script directory
+   registerFont(TTFont('MicrosoftYaHei', 'msyh.ttf'))
+
+   styles = getSampleStyleSheet()
+   styles['Normal'].fontName = 'MicrosoftYaHei'
+   ```
+
 ## Quick Start
 
 ```python
@@ -19,10 +56,12 @@ from pypdf import PdfReader, PdfWriter
 reader = PdfReader("document.pdf")
 print(f"Pages: {len(reader.pages)}")
 
-# Extract text
-text = ""
-for page in reader.pages:
-    text += page.extract_text()
+# Extract text (using helper script)
+# This is the recommended way to avoid encoding issues on Windows
+execute_script("pdf", "scripts/extract_text.py", "document.pdf output.txt")
+
+# Read extracted text
+text = read_skill_file("pdf", "output.txt")
 ```
 
 ## Python Libraries
@@ -59,9 +98,8 @@ reader = PdfReader("document.pdf")
 meta = reader.metadata
 print(f"Title: {meta.title}")
 print(f"Author: {meta.author}")
-print(f"Subject: {meta.subject}")
-print(f"Creator: {meta.creator}")
 ```
+
 
 #### Rotate Pages
 ```python
@@ -86,6 +124,9 @@ with pdfplumber.open("document.pdf") as pdf:
     for page in pdf.pages:
         text = page.extract_text()
         print(text)
+
+# Robust extraction (recommended for agents)
+# python scripts/extract_text.py document.pdf
 ```
 
 #### Extract Tables

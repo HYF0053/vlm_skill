@@ -1,0 +1,749 @@
+--- Page 1 ---
+How Foundational Skills Influence VLM-based Embodied Agents:
+A Native Perspective
+BoPeng1,2*,PiBu2*,KeyuPan4,XinrunXu2,3,YinxiuZhao2,
+MiaoChen2,YangDu2,LinLi2,JunSong2†,TongXu1†
+1UniversityofScienceandTechnologyofChina
+2AlibabaGroup
+3InstituteofSoftware,ChineseAcademyofSciences
+4IndependentResearcher
+Abstract of perceiving the environment through visual inputs, and
+perform complex task following natural language instruc-
+Recent advances in vision–language models (VLMs) have
+tions (Chen et al. 2025; Tan et al. 2025; Cao et al. 2025;
+shed light on human-level embodied intelligence. How-
+Longetal.2025;Yueetal.2025).
+ever,existingbenchmarksforVLM-drivenembodiedagents
+However,afundamentalchallengepersists:Howcanwe
+still rely on high-level commands or discretised action
+assess whether these models truly possess the capability to spaces—“non-native” settings that diverge markedly from
+the real world. Moreover, current benchmarks focus exclu- functionintherealworld,andwhichfundamentalskillsbot-
+sivelyonhigh-leveltasks,whilelackingjointevaluationand tleneck their performance? This question becomes partic-
+analysis on both low- and high-level. To bridge these gaps, ularly important as current evaluation benchmarks for em-
+we present NativeEmbodied, a challenging benchmark for bodiedagentexhibitseverallimitations:1)Non-NativeAc-
+VLM-driven embodied agents that adopts a unified, native tion Space: Recent benchmarks (Cheng et al. 2025; Yang
+low-levelactionspace.Builtupondiversesimulatedscenes, et al. 2025) attempt to deploy VLM-based agents in em-
+NativeEmbodiedfirstdesignsthreerepresentativehigh-level
+bodied simulators and evaluate them through interactive
+tasksincomplexscenarios toevaluateoverallperformance.
+tasks. They typically abstract low-level actions into high-
+For more detailed and comprehensive performance analy-
+level commands or functions that the agent can invoke di-
+sis, we further decouple the entangled skills behind com-
+rectly (e.g., “look at the apple”, “teleport to the desk”) -
+plex tasks and construct four types of low-level tasks, each
+corresponding to a key fundamental embodied skill. This whatwetermthe“non-native”setting.Thisabstractionem-
+joint evaluation across task and skill granularities enables a phasizes task reasoning and planning, while eclipsing crit-
+fine-grainedassessmentof embodiedagent.Comprehensive ical embodied skills such as spatial alignment and naviga-
+experiments on the best VLMs reveal pronounced deficien- tion,leadingtoaconsiderablegapfromrealworld.2)Cou-
+ciesincertainfundamentalembodiedskills.Furtheranalysis pledTaskDesign:Existingbenchmarksfocusonhigh-level
+showsthatthesebottlenecksseverelyconstrainperformance tasks that entangle multiple foundational skills and mea-
+onhigh-leveltasks.OurNativeEmbodiednotonlypinpoints
+sure model performance primarily by overall success rate.
+the key challenges faced by current VLM-driven embodied
+Suchcoarse-grainedtaskformulationandevaluationhinder
+agents,butalsoprovidesvaluableinsightforfuturedevelop-
+thediagnosisofskill-levelbottlenecks,yieldingassessments
+mentofthisfield.
+thatareneithercomprehensivenorsufficientlyfine-grained.
+Thoselimitationhighlightstwocriticalquestions:
+Code&Datasets—
+https://github.com/LivingFutureLab/NativeEmbodied • Q1: Which foundational skills are truly essential for
+VLM-basedembodiedagents?
+• Q2:Howdothesefoundationalskillsaffecttheexecution
+1 Introduction
+ofhigher-leveltasks?
+RecentadvancesinVision-LanguageModels(VLMs)have
+To answer the above questions, we present NativeEm-
+catalyzed significant progress in embodied intelligence
+bodied, the first comprehensive benchmark that assesses
+(Wang et al. 2024), bringing us closer to intelligent agents
+VLMs’ multidimensional embodied skills from a native
+thatcanoperateinthesimulatororphysicalworld(Cheang
+perspective. The following key features set NativeEmbod-
+et al. 2025; Wang et al. 2025; Open-X et al. 2025; Brohan
+ied apart from the other benchmarks: 1) Native Roll-
+et al. 2023). These VLM-based embodied agents, capable
+out Setting. Built on AI2THOR (Kolve et al. 2022)—a
+widely used embodied simulator with richly detailed en-
+*Theseauthorscontributedequally.
+†Email:jsong.sj@alibaba-inc.com,tongxu@ustc.edu.cn vironments—NativeEmbodied adopts a native rollout set-
+Copyright©2026,AssociationfortheAdvancementofArtificial ting. During a rollout, the agent receives only the initial
+Intelligence(www.aaai.org).Allrightsreserved. task instruction, action history, and the egocentric images
+6202
+beF
+42
+]IA.sc[
+1v78602.2062:viXra
+
+--- Page 2 ---
+BenchMark Size TaskLevel Fine-Grained Multimodal Native Decoupled
+ALFRED(Shridharetal.2020a) 3,062 High ✗ ✔ ✗ ✗
+ALFWorld(Shridharetal.2020b) 274 High ✗ ✗ ✗ ✗
+VLMbench(Zhengetal.2022) 4,760 Low ✗ ✔ ✔ ✗
+Behavior-1k(Lietal.2023) 1,000 High ✗ ✔ ✗ ✗
+Lota-bench(Choietal.2024) 308 High ✗ ✗ ✔ ✗
+GOAT-bench(Khannaetal.2024) 3,919 Low ✗ ✔ ✔ ✗
+EmbodiedAgentInferface(Lietal.2024) 438 High ✔ ✗ ✗ ✗
+EmbodiedBench(Lietal.2024) 1,128 High&Low ✔ ✔ ✗ ✗
+EmbodiedEval(Chengetal.2025) 328 High ✗ ✔ ✗ ✗
+NativeEmbodied(Ours) 1,085 High&Low ✔ ✔ ✔ ✔
+Table1:ComparisonsbetweenourNativeEmbodiedandpreviousbenchmarks.
+streamed by the simulator. In each turn, the agent are al- Bench (Yang et al. 2025) introduces a multi-domain suite
+lowedtospecifyactiononlyfromAI2THOR’sprimitiveac- spanning household, manipulation, and navigation, while
+tionset,includesparameterizablerotationsandmovements. relying on high-level action when dealing with high-level
+In this way, the agent is free to explore and interact with tasks.EmbodiedEval(Chengetal.2025)proposesamulti-
+theenvironmentinanativemanner,makingthebenchmark domainbenchmarkforVLMs,yetitslimitedscale(328in-
+more closely aligned with real-world conditions compared stances) and absence of low-level tasks highlight the need
+topreviousones.2)DecoupledTaskHierarchy.NativeEm- formorecomprehensivebenchmarks.
+bodied not only designs three categories of representative
+VLM-based Agents VLM-based agents typically ingest
+high-level tasks, but also decouples four categories of low-
+aninterleavedsequenceofimages,textinstructions,andop-
+level tasks based on them. Each of these low-level tasks
+tionallypastactions,thenoutputeitherfree-formtextordis-
+correspondstoafundamentalembodiedskill.Thesynergis-
+crete/continuous action functions (i.e., non-native setting)
+tic evaluation from complex high-level tasks to decoupled
+thatadownstreamexecutormapstolow-levelcontrols(Bai
+low-leveltasksfacilitatesmorecomprehensiveandgranular
+etal.2023;Qinetal.2025;Baietal.2025).Thisparadigm
+skillassessmentandbottleneckanalysis.Thereafter,wecon-
+has powered game agents (Xu et al. 2024) that generate
+ductedextensiveexperimentsandanalyseswithNativeEm-
+controller commands from screen pixels and dialogue in
+bodiedon15open-sourceandproprietaryVLMstoexplore
+Minecraft(Jucysetal.2024)andPoke´mon(Hu,Huang,and
+the capabilities of existing embodied agents from a native
+Liu 2024), as well as Mobile agents that navigate mobiles
+perspective.
+to book flights (Lin et al. 2024; Li et al. 2025; Gu et al.
+Ourcontributionsaresummarizedasfollows:
+2025). When instantiated for embodied tasks, however, the
+• We introduce a multidimensional, multigranular bench-
+agentmustconfrontanativeactionspace—open,close,pick
+mark built upon native action spaces, providing a more
+up,andputdown.Inthispaper,wehopetheembodiedagent
+realisticperspectiveforVLM-basedembodiedagents.
+canfreetoexploreandinteractwiththeenvironmentinana-
+• We present a comprehensive evaluation system for fun- tivemanner,makingourNativeEmbodiedbenchmarkmore
+damentalembodiedskillsatamorerawandnativelevel, closelyalignedwithreal-worldconditionscomparedtopre-
+wherehigh-andlow-leveltasksarecollaborativelyevalu- viousones.
+atedtorevealskill-levelbottlenecks,significantlyenhanc-
+ingtheexplainabilityofcapabilityassessment. 3 NativeEmbodiedBenchmark
+• We provide extensive experimental validation across 15
+From a native perspective, we start with the native ac-
+open-source and closed-source models, offering valuable
+tions an agent can take. Specifically, we collect these basic
+insights,withallresourcesandimplementationspublicly
+movesandbuildabenchmark,NativeEmbodied,thatchecks
+availabletofacilitatefurtherresearchinthisfield.
+fourlow-leveltasks(e.g.,centeralignmentandnavigation).
+Because each subtask is separate and mix-and-match, we
+2 RelatedWork
+then combine high-level tasks (e.g., search). Through this
+EmbodiedAgentBenchmarks AsshowninTable1,re- bottom-up, decoupled setup, we enable analysis of the re-
+cent years have witnessed a surge of benchmarks targeting lationshipsbetweenfoundationalcapabilitiesandfinialtask
+vision-driven embodied agents, yet most remain domain- successrates,revealingcriticalpathwaysofVLM-basedem-
+specificormodality-restricted.Classicbenchmarkssuchas bodiedagent.
+ALFWorld (Shridhar et al. 2020b) and ALFRED (Shridhar
+et al. 2020a) focus on high-level household tasks but ig- 3.1 NativeActionSpace
+norelow-levelcontrol;conversely,VLMbench(Zhengetal.
+To support the native setting, we define the native action
+2022)andGOAT-bench(Khannaetal.2024)evaluatelow-
+spaceasfollows:
+levelmanipulationandnavigation,respectively,butarecon-
+fined to isolated embodied skills. Concurrently, Embodied- • MoveAheadx(meters):Moveforwardxmeters
+
+--- Page 3 ---
+Low-Level Foundational Skills High-Level Complex Tasks
+Perception Exploration
+Alignme
+[
+[
+O
+n
+P
+t
+b
+la
+je
+t
+[
+c
+e
+M
+t
+u
+|
+|
+g
+L
+F
+o
+|
+r
+c
+o
+a
+. L
+n
+t
+E
+t
+i
+. F
+o
+T
+n
+|
+. |
+|
+C
+R
+o
+S
+u
+e
+i
+n
+c
+n
+t
+e
+k
+e
+p
+]
+r
+ta
+To
+c
+p
+le
+]
+]
+u
+de-4.0-
+G
+O p u
+e
+s
+mini
+C
+-2
+la
+.
+u
+5
+d
+-
+e-
+P
+3.
+r
+7-
+o
+So n net Qwen2.5-VL-72B
+GPT-o3
+How
+S
+m
+e
+a
+a
+ny
+r
+P
+c
+a
+h
+n are expo
+.
+s e
+[ R
+.
+d
+M o o t
+.
+in
+v a
+A
+e t
+t
+n
+e
+h
+s
+L R
+e
+w
+e i
+e
+f g
+ro
+r
+t h
+:
+t
+o
+0
+m
+9
+5
+.
+?
+]
+0 5
+Target the crosshair to Cla
+Find the Newspaper.
+the Statue. Gemini-2.0-Flash
+[MoveAhead 2m
+[RotateRight 45, LookDown 30
+GPT-4o
+LookDown 30] RotateRight 40]
+Navigation Planning Interaction
+Put the Box into the
+Move to the Laptop. Put the Tomato into the Fridge.
+GarbageBin.
+[Move Ahead 2m, [Navigate Table, Put the Tomato into Fridge
+RotateRight 45, PickUp Box [MoveAhead 0.5m
+. . . ] Rotate Left 90
+. . .
+PickUp Tomato. . .]
+Move Ahead 0.3m]
+Figure1:OurNativeEmbodiedbenchmarkincludesfourfundamentallow-leveltasks(i.e.,Perception,Alignment,Navigation
+andPlanning)andthreeintegratedhigh-leveltasks(i.e.,Exploration,Interaction,andSearch).
+• MoveBackx(meters):Movebackwardxmeters • Receptacle Content: Which of the following objects do
+• MoveLeftx(meters):Moveleftxmeters (ordon’t)appearonthespecifiedreceptacle?
+• MoveRightx(meters):Moverightxmeters • Co-existence:Whichofthefollowingobjectsis(orisn’t)
+• RotateRightx(degrees):Rotateviewrightbyxdegrees onthesamereceptacleasthethespecifiedobject?
+• RotateLeftx(degrees):Rotateviewleftbyxdegrees Search.Thistaskrequiresagentstopreciselylocateandtar-
+• LookUpx(degrees):Tiltviewupwardbyxdegrees get specified objects within the environment. We overlay a
+• LookDownx(degrees):Tiltviewdownwardbyxdegrees crosshairatthecenteroftheagent’segocentricobseravtion
+imagetoindicatethefocalpoint.Theagentmustapproach
+The nativeness of the action space lies in: unlike prior
+thetargetobjectandalignthecrosshairwithittocomplete
+works using high-level functions like navigating(Cheng
+the task. This challenge demands that the agent not only
+et al. 2025) or hardcoded action parameters(Yang et al.
+identifytheobject’slocationbutalsonavigatetoitandexe-
+2025), it applies lowest-level action primitives (e.g. Move
+cutefine-grainedspatialalignment.
+andRotate)thataVLMcanunderstandformulti-leveltasks,
+combinedwithfullycustomizedactionparameters(e.g.,dis- Interaction. The task requires the agent to interact with
+tance, angle). These primitives and parameters capture the objects in the scene to fulfill user instructions. Concretely,
+basicsemanticsoftheagent-environmentinteraction,allow- wefocusontherepresentativepick-and-placescenario:the
+ing agents to operate in the environment in a primitive and agent must place a specified object into a specified recep-
+unconstrained manner. Our NativeEmbodied represents the tacle.Thetargetobjectmaybeexposedintheenvironment
+firstbenchmarktoprovidecompletelyunrestrictednativeac- or stored inside a closed receptacle, and the destination re-
+tionspaceacrosshigh-leveltasksandlow-levelskills. ceptaclemaybeonethatdoesnotneedtobeopened(e.g.,a
+tabletop)oronethatdoes(e.g.,arefrigerator).Forthistask
+3.2 High-levelComplexTasks we augment the original action space with four additional
+interactionprimitives:PickUp,PutIn,Open,andClose.
+We start with three representative high-level tasks that
+benchmarktheoverallperformanceinthenativesettings:
+Exploration.Thistaskposesquestionsrelatedtoobjectsin 3.3 Low-levelFoundationalSkills
+theenvironment,requiringagentstofullyexploretheenvi-
+Whilehigh-leveltasksrevealanagent’soverallcompetence,
+ronmenttoprovidecorrectanswers.Forthistask,wesubdi-
+they are not ideal for diagnosing specific skill deficiencies.
+videitintofoursubtypes:
+The limitation is even starker in the native setting: here, a
+• Counting:Howmanyspecifiedobjectsareexposedinthe model’s core embodied abilities are tested directly, yet the
+environment? multi-skill nature of the high-level tasks masks individual
+• Localization:Whichreceptacledoesthespecifiedobject bottlenecks. For better evaluation, we therefore decompose
+locatein? the high-level tasks from a skill-centric perspective and in-
+
+--- Page 4 ---
+troducefourclassesoflow-leveltasksthateachtargetafun-
+damentalskills:
+Perception. This task is designed to probe the agent’s per-
+ceptual abilities. The agent must describe the key semantic
+andspatialelementsoftheegocentricobservationimagein
+apredefinedobject—location—receptacletripletformat:
+• Listeveryobjectvisibleinthefieldofview.
+• Specifyeachobject’sspatialrelationshiptotheagent.
+• Specifyeachobject’sreceptacle.
+This approach combines visual and spatial perception, and
+its structured format facilitates fine-grained evaluation of
+each aspect, making the evaluation in this paper more in-
+tuitiveandflexible.
+Spatial Alignment. Similar to the search task, the agent
+must align the center of its view with the specified object.
+However, to decouple from other foundational skills such
+as planning and navigation, we initialize the agent close to
+thetargetsotheobjectisalreadywithinitsegocentricview. Figure2:SampledistributionofNativeEmbodied.
+Wealsoremoveallmovementactionsfromtheactionspace,
+leavingonlyview-adjustmentactions.Asaresult,theagent
+neednotdeviseasearchstrategyorphysicallyapproachthe We then identified samples that either achieved complete
+target;itmerelyadjustsitsgaze,enablingafocusedevalua- success or complete failure across all rounds. Human ex-
+tionofthemodel’sfine-grainedspatialalignmentcapability. perts subsequently intervened to assess the task feasibility
+Navigation.Wedefinethenavigationtaskasfollows:Given of all-fail samples and the difficulty level of all-pass sam-
+a target object, the agent is deemed successful upon reach- ples. We filtered out infeasible erroneous samples from the
+ing within 1 meter of that object. To ensure sufficient path all-failsamplesandexcludedsampleswithinsufficientdif-
+complexity,theagentisinitializedatthecorneroftheroom ficulty from the all-pass samples, ultimately obtaining all
+farthestfromthetargetobject.Meanwhile,thetargetobject samples for NativeEmbodied. More details of the data col-
+isguaranteedtoremainvisiblewithintheagent’sinitialfield lectionpipelineareprovidedinAppendix.
+of view, so that the challenge lies purely in the fundametal
+navigationcapabilities.
+3.5 DatasetStatistics
+Planning.Thegoalofthistaskistoevaluateanagent’stask-
+planning ability. In essence, this ability corresponds to the Figure2illustratesourNativeEmbodiedbenchmark,which
+brain’scognitivereasoningfunctionsratherthanthecerebel- consistsof1,085samplesandencompassesthreehigh-level
+lum’smotor-controlfunctions.Toeffectivelydecouplemo- tasksaswellasfourlow-leveltasks,makingitacomprehen-
+tor control from planning, we abstract the four basic mo- siveevaluationtool.
+tion primitives into directly callable navigation interfaces.
+Weadoptaninteractive-taskframeworkbecausetheexplicit,
+4 Experiment
+multi-stagenatureofitsexecutionprocessisespeciallywell-
+suitedforfine-grainedevaluationofplanningcapability. 4.1 MainResults
+3.4 DataCollection 4.2 EvaluationSetup
+The data samples are gathered through a rigorous pipeline Baselines. Weevaluate15open-sourceandclosed-source
+that comprises automatic sample generation and human-
+models,coveringfourmodelfamilies:
+machinecollaborativefiltering,ensuringeachsampleisboth
+high-qualityandappropriatelychallenging. • GPTfamily1:GPT-4o,GPT-4v,GPT-o3,GPT-o4-mini.
+By exploiting AI2-THOR’s comprehensive environment • Claude family2: Claude-3.5-Sonnet, Claude-3.7-Sonnet,
+(Kolveetal.2022)andobjectmetadata—suchas3-Dcoor-
+Claude-4-Sonnet,Claude-4-Opus.
+dinates, state flags, and instance-segmentation masks—we
+• Gemini family (Gemini Team et al. 2024): Gemini-2.0-
+batch-generatecandidatesamplesforeverytask.Fortheex-
+flash,Gemini-2.5-flash,Gemini-2.5-pro.
+ploration task in particular, we first query the simulator to
+retrieve all objects in the scene along with their associated • Qwen family3: Qwen-2.5-VL-72B, Qwen-2.5-VL-32B,
+receptacles,andthenautomaticallyinstantiatethefourpre- Qwen-2.5-VL-7B,Qwen-2.5-VL-3B.
+viouslydefinedquestiontypes.
+To further enhance sample quality, we implemented a 1https://openai.com/index/
+human-machinecollaborativeapproach.Wedeployedanad- 2https://www.anthropic.com/news/claude-3-5-sonnet
+vanced MLLM to conduct 5 rounds of rollout evaluations 3https://help.aliyun.com/zh/model-studio/developer-
+on the samples, tracking the success rate for each sample. reference/use-qwen-by-calling-api
+
+--- Page 5 ---
+Exploration Search Interaction
+Model
+Acc↑ AS↓ WAS↓ SR↑ ACPD↓ AS↓ WAS↓ SR↑ AS↓ WAS↓
+Closed-SourceLargeVisionLanguageModels
+GPT-4o 36.89 12.32 24.11 0.65 131.29 25.00 30.96 22.28 12.25 26.84
+GPT-4v 36.89 10.42 23.41 3.27 112.53 12.60 30.35 37.31 12.07 24.03
+GPT-o3 52.43 11.06 20.54 34.64 32.94 15.60 25.67 38.34 13.35 24.25
+GPT-o4-mini 40.78 5.48 20.59 17.64 37.93 13.07 27.84 26.42 13.33 28.27
+Claude-3.5-sonnet 31.07 9.78 24.41 3.27 103.27 14.60 30.46 19.69 13.19 27.58
+Claude-3.7-sonnet 37.86 14.67 24.81 11.76 68.13 14.33 29.04 28.50 12.93 26.17
+Claude-4-sonnet 37.86 12.59 24.03 0 95.88 - 31.00 30.01 13.59 27.44
+Claude-4-opus 37.86 12.72 24.08 4.58 84.17 6.86 29.82 36.27 12.48 24.87
+Gemini-2.5-pro 40.78 4.71 20.28 14.38 35.89 7.91 27.68 33.68 12.17 24.67
+Gemini-2.5-flash 40.78 6.40 20.97 12.42 58.49 11.58 28.59 32.64 14.46 25.98
+Gemini-2.0-flash 39.81 11.51 23.24 2.61 90.83 14.75 30.58 24.87 13.53 26.79
+Open-SourceLargeVisionLanguageModels
+Qwen2.5-VL-72B 33.01 11.82 24.67 1.96 130.40 7.00 30.69 8.29 13.63 28.37
+Qwen2.5-VL-32B 31.07 14.6 25.41 1.31 129.93 23.00 30.83 6.74 13.15 29.61
+Qwen2.5-VL-7B 28.16 11.6 26.14 0 131.26 - 31.00 1.55 25.00 30.83
+Qwen2.5-VL-3B 25.24 8.13 26.03 0 131.68 - 31.00 0 - 31.00
+Table2:Performancecomparisonofclosed-sourceandopen-sourceLVLMsonthethreehigh-leveltasks:Exploration,Search
+andInteraction.Formetrics,↑/↓mean”higherisbetter”/”lowerisbetter”.
+Environment. In each turn of interaction, the agent re- • Average Closest Pixel Distance (ACPD): The mean of
+ceives a 640 × 480 egocentric image with a 90° field of theminimumpixeldistancebetweenthetargetobjectand
+viewasinputandoutputsoneactionwithspecifiedparame- theviewcenteracrossthetrajectories.
+tersfromtheactionspace.Therolloutsteplimitsare15for
+We report Precision, Recall, and F1 score for Perception.
+alignmentandnavigation,20forplanning,and30forthree
+Each predicted triplet is considered positive only when all
+high-level tasks. The text–image history is truncated to 20
+ofitspartsexactlymatchthegroundtruth.
+turns.Duringinference,thetemperatureofallVLMsisuni-
+formlysetas0toensurereproducibilityandconsistency. 4.3 MainResults
+High-level tasks in native settings pose significant chal-
+EvaluationMetrics. Toobtainamorecomprehensiveand
+lenges for VLMs. Table 2 shows the performance of vari-
+fine-grainedpictureofanagent’sperformance,wereportthe
+ousVLMsonthethreecategoriesofhigh-leveltasks.Even
+followingmetricsinadditiontoSuccessRate(SR):
+thestrongestVLMsgenerallystrugglewithhigh-leveltasks
+• AverageSteps(AS):Themeannumberofstepstakenin undernativesettings.ThisisparticularlyevidentinSearch,
+successful episodes, reflecting how efficiently the agent where the best-performing model GPT-o3 achieves only a
+completesatask. 34.9%successrate,whileClaude-4-Sonnetfailstocomplete
+even a single task successfully. The same pattern holds for
+• WeightedAverageSteps(WAS):Foreachsuccessfultra-
+Interaction and Exploration, with the highest success rates
+jectory we use its actual length, whereas for each failed
+beingmerely52.4%and38.3%respectively.Thisindicates
+trajectoryweassignapenalisedlengthequaltothetask’s
+that in native embodied environments, current VLMs are
+predefined maximum number of steps T plus a penalty
+stillfarfrombeingcapableofeffectivelyexecutingcomplex
+factorα > 0(setto1inourexperiment).Formally,letS
+tasks.
+andF bethesetsofsuccessfulandfailedepisodes,s the
+i VLMsexhibitsignificantperformancedisparitiesacross
+numberofstepstakeninthei-thsuccessfulepisode.The
+different low-level tasks. As shown in Table ??, delving
+WASis,
+into various low-level tasks, we find that models demon-
+(cid:88) (cid:88) strate clear differentiation in performance across different
+s + (α+T)
+i tasks. First, VLMs display satisfying performance on Per-
+WAS = i∈S j∈F . (1) ception, indicating that current models’ reliable capability
+|S|+|F| in understanding and recognizing visual information. Sec-
+ond,inPlanning,VLMssimilarlydemonstratestrongcapa-
+AsmallerWASindicatesthattheagentnotonlysucceeds
+bilities,withproprietarymodelsgenerallyachievingsuccess
+frequentlybutalsodoessoefficiently.
+rates exceeding 50%, showcasing their reliability in task
+• AverageClosestDistance(ACD):TheshortestEuclidean planning and reasoning. However, when tasks involve fine-
+distancebetweentheagentandthetargetobjectacrossthe grained operations in embodied environments, model per-
+trajectories. formance shows a significant decline. In Navigation, more
+
+--- Page 6 ---
+Perception SpatialAlignment Navigation Planning
+Model
+P↑ R↑ F1↑ SR↑ ACPD↓ AS↓ WAS↓ SR↑ ACD↓ AS↑ WAS↓ SR↑ AS↓ WAS↓
+Closed-SourceLargeVisionLanguageModels
+GPT-4o 75.14 73.15 74.28 7.51 86.85 3.91 15.07 50.00 2.16 6.87 11.42 58.55 9.63 14.82
+GPT-4v 79.51 78.11 78.83 6.94 66.81 3.23 15.12 55.56 2.23 7.81 11.43 62.18 9.25 14.04
+GPT-o3 83.15 84.51 83.97 64.16 22.73 7.28 10.4 63.19 2.02 8.34 11.08 72.54 10.71 13.87
+GPT-o4-mini 74.67 75.16 74.92 45.09 27.45 6.34 11.57 35.42 2.68 8.11 13.24 66.32 10.23 14.36
+Claude-3.5-sonnet 76.59 72.33 73.82 9.83 63.38 2.82 14.72 47.92 2.01 7.83 12.12 55.44 10.40 15.55
+Claude-3.7-sonnet 76.76 73.27 74.35 20.23 60.91 4.01 13.62 42.36 2.14 7.92 12.55 60.62 11.47 15.84
+Claude-4-sonnet 77.51 73.58 74.77 36.41 29.39 6.63 11.83 27.78 2.43 4.39 12.76 67.36 10.33 14.30
+Claude-4-opus 81.21 81.14 79.59 39.31 28.74 7.87 11.28 53.47 1.72 4.11 9.74 67.88 10.35 14.16
+Gemini-2.5-pro 80.15 80.87 80.53 45.09 26.01 4.49 10.72 41.67 2.40 7.26 12.41 68.39 9.50 13.67
+Gemini-2.5-flash 77.98 79.47 78.42 35.84 30.36 7.41 12.93 38.19 2.65 7.67 12.78 52.33 10.54 16.35
+Gemini-2.0-flash 72.71 74.33 73.39 9.25 84.46 3.93 14.91 37.50 2.81 8.21 13.32 48.19 10.41 16.91
+Open-SourceLargeVisionLanguageModels
+Qwen2.5-VL-72B 77.86 74.34 76.42 12.72 80.58 4.93 14.61 61.11 2.21 6.19 10.03 37.82 9.78 17.16
+Qwen2.5-VL-32B 73.51 72.15 72.86 7.51 85.32 4.14 14.93 36.11 2.36 7.28 12.32 25.39 9.47 18.32
+Qwen2.5-VL-7B 71.61 70.74 71.01 5.78 86.14 3.33 15.12 25.00 2.71 7.21 12.81 12.95 10.28 19.56
+Qwen2.5-VL-3B 68.61 66.59 67.12 4.05 88.93 3.01 15.21 19.44 2.95 8.34 13.82 3.63 7.38 20.83
+Table3:PerformanceofselectedLVLMsonfourlow-leveltasks:Perception,SpatialAlignment,NavigationandPlanning.↑/
+↓denote“higherisbetter”/“lowerisbetter”.
+than half of the models achieve success rates below 50%,
+withtheworst-performingproprietarymodelachievingonly
+27.8% success rate. Even more surprisingly are the results
+forAlignment—theseseeminglysimpleoperationshavebe-
+comeasignificantchallengeforVLMs.ExceptforGPT-4o,
+nomodelachievesasuccessrateexceeding50%,andamong
+closed-sourcemodels,fourmodelsachieveonlysingle-digit
+Figure 3: Results from the skill-oriented ablation study,
+successrates.TheseresultsclearlyindicatethatwhileVLMs
+aimed to precisely identify the key atomic skills that limit
+havemadeprogressincertainaspects,fundamentalskillde-
+modelperformance.
+ficiencies still exist for specific basic embodied skills, par-
+ticularlyintasksrequiringdynamicspatialinteraction.
+MainstreamVLMsexhibitdistinctbehavioralspectrain
+native setting. The contrast between high- and low-level • Perception:WeutilizeAI2THOR’sAPItoextractinstance
+tasksnotonlyrevealsthelimitationsofeachmodelbutalso segmentation from each egocentric image, converting it
+allows them to demonstrate distinct strategic tendencies in into structured text descriptions through predefined tem-
+embodied environments. In Navigation, GPT-o3 leads with platesassupplementaryinputtothemodel.
+thehighestsuccessrate,yetatthecostofsignificantlylonger • Alignment:A“LookAt”isproviedfortheagenttodirecty
+average step counts, revealing a robust and conservative aimviewintothetargetobjectifvisible.
+path-planningpreference.Incontrast,Claude-4-Opusmain-
+• Navigation: The agent is allowed to teleport to the target
+tains over 50% success rate with less than half the steps
+objectifvisible.
+of GPT-o3, and leads in both ACD and WAS metrics, re-
+flectingamoreaggressive,efficiency-firstexplorationstyle. • Planning: We pre-decompose tasks into subtask se-
+InExploration,GPT-o4-miniandGemini-2.5-Prohavesig- quences,askingthemodeltoexecutethemstep-by-step.
+nificantly fewer average steps than other models, yet still
+WeselectedClaude-3.5-Sonnetasourexperimentalsubject,
+achievehighaccuracyratessecondonlytoGPT-o3,indicat-
+asthismodeldemonstratesmoderateperformanceinbench-
+ingthatbotharemoreagileandconfidentincollectingand
+mark tests, offering good representativeness that facilitates
+utilizingenvironmentalinformation.
+more generalizable conclusions. As shown in Figure 3, the
+experimentalresultsrevealthreeimportantinsights:
+4.4 AblationStudyofFoundamentalSkills
+Mature Perception Capabilities. The introduction of
+The main experimental results in Section 4.3 demonstrate ground-truth perception information failed to significantly
+that current VLMs exhibit significant limitations when ex- improve model performance,indicating current advanced
+ecuting complex tasks in native embodied environments. VLMsalreadypossesssufficientvisualcapabilities.
+Basic skill assessments further reveal deficiencies in mod- Dual Bottlenecks in Long-Horizon Tasks In Exploration
+els’ core embodied capabilities. To precisely identify the and Interaction tasks, ablation on both planning and navi-
+keyatomicskillslimitingmodelperformance,weconducted gation yield significant improvements, indicating that both
+systematicskillablationexperiments: cognitive-level decision-making abilities (planning) and
+
+--- Page 7 ---
+Insufficient Exploration
+Q:Howmany Ladles are exposed in the room?
+Agent:
+Done!
+<answer> 1</answer>
+GroundTruth:2
+Step 5
+Redundant View Adjustment
+Figure4:Resultsofthinkmodeablationstudy,aimedtoex-
+plorethecapabilitiesofreasoningmodels.
+`
+action-level execution abilities (navigation) are key bottle-
+necksforlong-horizontasks. RotateLeft30 RotateRight15 RotateRight15
+Fine-Grained Spatial Requirements in Search Tasks In Frequent Collision
+Search tasks, improvements to navigation and alignment
+capabilities (particularly alignment) showed significant ef-
+fects, while planning capability had limited impact. This
+`
+reflects the unique characteristics of search tasks: their
+immediate-responsenaturereducesdependenceoncomplex ⚠Collision! ⚠Collision! ⚠Collision!
+planning, but demands extremely high precision in spatial MoveAhead0.8 MoveAhead0.5 MoveBack0.5
+positioningandviewpointcontrol.
+Figure5:Casestudyofcommonerrortrajectories.
+4.5 AblationStudyofThinkMode
+Reasoningmodels’improvedproblem-solvingskills(Huang 4.6 ErrorCaseAnalysis
+et al. 2025; Liu et al. 2025; Gu et al. 2025) motivate us to
+As shown in Figure 5, we summarized three categories of
+explore whether it could help break through current bot-
+the most common errors exhibited by agents evaluated in
+tlenecks. We selected two specialized reasoning models:
+ourNativeEmbodiedbenchmark:
+Gemini-2.5-Pro and Claude-4-Opus. Specifically, in each
+roundofrollout,wefirstaskthemodelstothink4,thenselect • Insufficient Exploration: Agents sometimes fail to con-
+an action. The experimental results are shown in Figure 4, duct comprehensive exploration of the environment, pre-
+fromwhichwecandrawthefollowinginsights: maturely drawing conclusions based solely on partial in-
+Thinking enhances cognitive abilities for embodied en- formation,demonstratingoverconfidence.
+vironments.Afterenablingthinkingmode,theoverallpre- • Redundant View Adjustment: Agents frequently per-
+formance on both perception and planning tasks increased, form repetitive and unnecessary view adjustments within
+indicating that the reasoning process helps models bet- a considerable number of valid steps, severely reducing
+ter understand environmental states, identify key elements, task execution efficiency. Worse still, the resulting repet-
+and formulate more reasonable high-level strategies. This itive observations can sometimes lead agents into opera-
+improvement is particularly pronounced in tasks requiring tionaldeadloops.
+complexreasoningandlong-termplanning. • Frequent collision: Agents exhibit poor perception and
+Thinkingmayinterferewithbasicactionexecution.After response to environmental collisions, unable to make ef-
+engaging in thinking mode, success rates for tasks that re- fective adjustments based on historical information, re-
+quirepreciseactionactuallydecreasedsignificantly,suchas sultinginfrequentcollisions.Thisissueisparticularlyse-
+alignment and navigation. This decline might be attributed vere when agents are in confined spaces such as corners,
+to excessive reasoning processes, which can introduce un- wheretheyeasilybecomestuckandunabletoescape.
+necessarycomplexityandinterferewiththeintuitiveexecu-
+tionofbasicactions.
+5 Conclusion
+These findings reveal the double-edged sword effect of
+introducing reasoning capabilities into embodied agents: In this work, we presented NativeEmbodied benchmark, a
+whilereasoningcanenhancecognitiveabilities,itmayinter- comprehensive benchmark for evaluating VLM-driven em-
+fere with low-level motor control. This suggests that when bodiedagentsusingaunified,nativelow-levelactionspace.
+constructing embodied agents, we need to more carefully Through systematic evaluation of both low-level and high-
+balance the functional division between the “cerebrum” leveltasksacross15open-sourceandclosed-sourceVLMs,
+(cognitivereasoning)and“cerebellum”(actioncontrol). weidentifiedsignificantlimitationsinfundamentalembod-
+iedcapabilitiesthatdirectlyimpactperformanceoncomplex
+4Notably, for reasoning models, we enable their reasoning tasks.Ourfindingsnotonlyhighlightthecurrentchallenges
+mode;fornon-reasoningmodels,werequestthemtooutputtheir inVLM-drivenembodiedintelligencebutalsoprovidevalu-
+thinkingprocessintheprompt ableguidanceforfuturedevelopmentinthisfield.
+
+--- Page 8 ---
+6 Acknowledgements R1:TowardsInteractiveReinforcementLearningforVLM-
+Based Mobile Agent via Task-Level Rewards. arXiv
+ThisworkwassupportedbythegrantsfromNationalNatu-
+preprintarXiv:2506.20332.
+ralScienceFoundationofChina(No.62222213,62072423).
+Hu, S.; Huang, T.; and Liu, L. 2024. PokeLLMon: A
+References Human-Parity Agent for Pokemon Battles with Large Lan-
+guageModels. arXiv:2402.01118.
+Bai,J.;Bai,S.;Yang,S.;Wang,S.;Tan,S.;Wang,P.;Lin,J.;
+Zhou, C.; and Zhou, J. 2023. Qwen-vl: A versatile vision- Huang, W.; Jia, B.; Zhai, Z.; Cao, S.; Ye, Z.; Zhao, F.; Xu,
+language model for understanding, localization, text read- Z.;Hu,Y.;andLin,S.2025.Vision-r1:Incentivizingreason-
+ing,andbeyond. arXivpreprintarXiv:2308.12966,1(2):3. ing capability in multimodal large language models. arXiv
+preprintarXiv:2503.06749.
+Bai,S.;Chen,K.;Liu,X.;Wang,J.;Ge,W.;Song,S.;Dang,
+K.;Wang,P.;Wang,S.;Tang,J.;Zhong,H.;Zhu,Y.;Yang, Jucys,K.;Adamopoulos,G.;Hamidi,M.;Milani,S.;Sam-
+M.;Li,Z.;Wan,J.;Wang,P.;Ding,W.;Fu,Z.;Xu,Y.;Ye, sami, M. R.; Zholus, A.; Joseph, S.; Richards, B.; Rish,
+J.;Zhang,X.;Xie,T.;Cheng,Z.;Zhang,H.;Yang,Z.;Xu, I.; and O¨zgu¨r S¸ims¸ek. 2024. Interpretability in Ac-
+H.; and Lin, J. 2025. Qwen2.5-vl technical report. arXiv tion: Exploratory Analysis of VPT, a Minecraft Agent.
+preprintarXiv:2502.13923. arXiv:2407.12161.
+Brohan, A.; Brown, N.; Carbajal, J.; Chebotar, Y.; Chen, Khanna, M.; Ramrakhya, R.; Chhablani, G.; Yenamandra,
+X.;Choromanski,K.;Ding,T.;Driess,D.;Dubey,A.;Finn, S.;Gervet,T.;Chang,M.;Kira,Z.;Chaplot,D.S.;Batra,D.;
+C.;Florence,P.;Fu,C.;Arenas,M.G.;Gopalakrishnan,K.; andMottaghi,R.2024.Goat-bench:Abenchmarkformulti-
+Han,K.;Hausman,K.;Herzog,A.;Hsu,J.;Ichter,B.;Irpan, modallifelongnavigation. InProceedingsoftheIEEE/CVF
+A.;Joshi,N.;Julian,R.;Kalashnikov,D.;Kuang,Y.;Leal,I.;
+Conference on Computer Vision and Pattern Recognition,
+Lee,L.;Lee,T.-W.E.;Levine,S.;Lu,Y.;Michalewski,H.; 16373–16383.
+Mordatch,I.;Pertsch,K.;Rao,K.;Reymann,K.;Ryoo,M.; Kolve, E.; Mottaghi, R.; Han, W.; VanderBilt, E.; Weihs,
+Salazar, G.; Sanketi, P.; Sermanet, P.; Singh, J.; Singh, A.; L.; Herrasti, A.; Deitke, M.; Ehsani, K.; Gordon, D.; Zhu,
+Soricut,R.;Tran,H.;Vanhoucke,V.;Vuong,Q.;Wahid,A.; Y.; Kembhavi, A.; Gupta, A.; and Farhadi, A. 2022. AI2-
+Welker,S.;Wohlhart,P.;Wu,J.;Xia,F.;Xiao,T.;Xu,P.;Xu, THOR: An Interactive 3D Environment for Visual AI.
+S.;Yu,T.;andZitkovich,B.2023. RT-2:Vision-Language- arXiv:1712.05474.
+Action Models Transfer Web Knowledge to Robotic Con- Li, C.; Zhang, R.; Wong, J.; Gokmen, C.; Srivastava, S.;
+trol. arXiv:2307.15818. Mart´ın-Mart´ın, R.; Wang, C.; Levine, G.; Lingelbach, M.;
+Cao, Y.; Lu, J.; Huang, Z.; Shen, Z.; Zhao, C.; Hong, Sun,J.;etal.2023. Behavior-1k:Abenchmarkforembod-
+F.; Chen, Z.; Li, X.; Wang, W.; Liu, Y.; and Liu, Z. iedaiwith1,000everydayactivitiesandrealisticsimulation.
+2025. Reconstructing 4D Spatial Intelligence: A Survey. InConferenceonRobotLearning,80–93.PMLR.
+arXiv:2507.21045. Li,M.;Zhao,S.;Wang,Q.;Wang,K.;Zhou,Y.;Srivastava,
+Cheang, C.; Chen, S.; Cui, Z.; Hu, Y.; Huang, L.; Kong, S.; Gokmen, C.; Lee, T.; Li, E. L.; Zhang, R.; et al. 2024.
+T.; Li, H.; Li, Y.; Liu, Y.; Ma, X.; Niu, H.; Ou, W.; Peng, Embodied agent interface: Benchmarking llms for embod-
+W.; Ren, Z.; Shi, H.; Tian, J.; Wu, H.; Xiao, X.; Xiao, ieddecisionmaking. AdvancesinNeuralInformationPro-
+Y.; Xu, J.; and Yang, Y. 2025. GR-3 Technical Report. cessingSystems,37:100428–100534.
+arXiv:2507.15493. Li, X.; Zeng, Y.; Xing, X.; Xu, J.; and Xu, X. 2025.
+Chen, P.; Bu, P.; Wang, Y.; Wang, X.; Wang, Z.; Guo, J.; HedgeAgents: A Balanced-aware Multi-agent Financial
+Zhao,Y.;Zhu,Q.;Song,J.;Yang,S.;Wang,J.;andZheng, TradingSystem. arXiv:2502.13165.
+B. 2025. CombatVLA: An Efficient Vision-Language- Lin, K. Q.; Li, L.; Gao, D.; Yang, Z.; Wu, S.; Bai, Z.;
+ActionModelforCombatTasksin3DActionRole-Playing Lei, W.; Wang, L.; and Shou, M. Z. 2024. ShowUI:
+Games. arXiv:2503.09527. OneVision-Language-ActionModelforGUIVisualAgent.
+Cheng, Z.; Tu, Y.; Li, R.; Dai, S.; Hu, J.; Hu, S.; Li, J.; arXiv:2411.17465.
+Shi,Y.;Yu,T.;Chen,W.;etal.2025. Embodiedeval:Eval- Liu,Z.;Sun,Z.;Zang,Y.;Dong,X.;Cao,Y.;Duan,H.;Lin,
+uate multimodal llms as embodied agents. arXiv preprint D.;andWang,J.2025.Visual-rft:Visualreinforcementfine-
+arXiv:2501.11858. tuning. arXivpreprintarXiv:2503.01785.
+Choi,J.-W.;Yoon,Y.;Ong,H.;Kim,J.;andJang,M.2024. Long, X.; Zhao, Q.; Zhang, K.; Zhang, Z.; Wang, D.; Liu,
+Lota-bench:Benchmarkinglanguage-orientedtaskplanners Y.;Shu,Z.;Lu,Y.;Wang,S.;Wei,X.;Li,W.;Yin,W.;Yao,
+forembodiedagents. arXivpreprintarXiv:2402.08178. Y.; Pan, J.; Shen, Q.; Yang, R.; Cao, X.; and Dai, Q. 2025.
+Gemini Team, g.; Georgiev, P.; Lei, V. I.; Burnell, R.; Bai, A Survey: Learning Embodied Intelligence from Physical
+L.; Gulati, A.; Tanzer, G.; Vincent, D.; Pan, Z.; Wang, S.; SimulatorsandWorldModels. arXiv:2507.00917.
+etal.2024. Gemini1.5:Unlockingmultimodalunderstand- Open-X; O’Neill, A.; Rehman, A.; Gupta, A.; Maddukuri,
+ing across millions of tokens of context. arXiv preprint A.; Gupta, A.; Padalkar, A.; Lee, A.; Pooley, A.; Gupta,
+arXiv:2403.05530.
+A.; Mandlekar, A.; Jain, A.; Tung, A.; Bewley, A.; Her-
+Gu, J.; Ai, Q.; Wang, Y.; Bu, P.; Xing, J.; Zhu, Z.; Jiang, zog, A.; Irpan, A.; Khazatsky, A.; Rai, A.; Gupta, A.;
+W.;Wang,Z.;Zhao,Y.;Zhang,M.-L.;etal.2025. Mobile- Wang,A.;Kolobov,A.;Singh,A.;Garg,A.;Kembhavi,A.;
+
+--- Page 9 ---
+Xie, A.; Brohan, A.; Raffin, A.; Sharma, A.; Yavary, A.;
+Jain,A.;Balakrishna,A.;Wahid,A.;Burgess-Limerick,B.;
+Kim, B.; Scho¨lkopf, B.; Wulfe, B.; et al. 2025. Open X-
+Embodiment:RoboticLearningDatasetsandRT-XModels.
+arXiv:2310.08864.
+Qin, Y.; Ye, Y.; Fang, J.; Wang, H.; Liang, S.; Tian, S.;
+Zhang,J.;Li,J.;Li,Y.;Huang,S.;etal.2025. Ui-tars:Pio-
+neeringautomatedguiinteractionwithnativeagents. arXiv
+preprintarXiv:2501.12326.
+Shridhar,M.;Thomason,J.;Gordon,D.;Bisk,Y.;Han,W.;
+Mottaghi,R.;Zettlemoyer,L.;andFox,D.2020a. Alfred:A
+benchmarkforinterpretinggroundedinstructionsforevery-
+day tasks. In Proceedings of the IEEE/CVF conference on
+computervisionandpatternrecognition,10740–10749.
+Shridhar,M.;Yuan,X.;Coˆte´,M.-A.;Bisk,Y.;Trischler,A.;
+andHausknecht,M.2020b.Alfworld:Aligningtextandem-
+bodiedenvironmentsforinteractivelearning. arXivpreprint
+arXiv:2010.03768.
+Tan,W.;Zhang,W.;Xu,X.;Xia,H.;Ding,Z.;Li,B.;Zhou,
+B.; Yue, J.; Jiang, J.; Li, Y.; An, R.; Qin, M.; Zong, C.;
+Zheng, L.; Wu, Y.; Chai, X.; Bi, Y.; Xie, T.; Gu, P.; Li, X.;
+Zhang, C.; Tian, L.; Wang, C.; Wang, X.; Karlsson, B. F.;
+An, B.; Yan, S.; and Lu, Z. 2025. Cradle: Empowering
+Foundation Agents towards General Computer Control. In
+Forty-second International Conference on Machine Learn-
+ing(ICML).
+Wang, P.; Bai, S.; Tan, S.; Wang, S.; Fan, Z.; Bai, J.;
+Chen, K.; Liu, X.; Wang, J.; Ge, W.; Fan, Y.; Dang, K.;
+Du, M.; Ren, X.; Men, R.; Liu, D.; Zhou, C.; Zhou,
+J.; and Lin, J. 2024. Qwen2-VL: Enhancing Vision-
+Language Model’s Perception of the World at Any Reso-
+lution. arXiv:2409.12191.
+Wang, Z.; Dong, Y.; Luo, F.; Ruan, M.; Cheng, Z.; Chen,
+C.; Li, P.; and Liu, Y. 2025. EscapeCraft: A 3D Room Es-
+capeEnvironmentforBenchmarkingComplexMultimodal
+ReasoningAbility. arXiv:2503.10042.
+Xu,X.;Wang,Y.;Xu,C.;Ding,Z.;Jiang,J.;Ding,Z.;and
+Karlsson,B.F.2024. Asurveyongameplayingagentsand
+largemodels:Methods,applications,andchallenges. arXiv
+preprintarXiv:2403.10249.
+Yang, R.; Chen, H.; Zhang, J.; Zhao, M.; Qian, C.; Wang,
+K.; Wang, Q.; Koripella, T. V.; Movahedi, M.; Li, M.;
+etal.2025. Embodiedbench:Comprehensivebenchmarking
+multi-modal large language models for vision-driven em-
+bodiedagents. arXivpreprintarXiv:2502.09560.
+Yue,J.;Xu,X.;Karlsson,B.F.;andLu,Z.2025. MLLMas
+Retriever: Interactively Learning Multimodal Retrieval for
+EmbodiedAgents. InTheThirteenthInternationalConfer-
+enceonLearningRepresentations,ICLR.
+Zheng, K.; Chen, X.; Jenkins, O. C.; and Wang, X. 2022.
+Vlmbench: A compositional benchmark for vision-and-
+language manipulation. Advances in Neural Information
+ProcessingSystems,35:665–678.

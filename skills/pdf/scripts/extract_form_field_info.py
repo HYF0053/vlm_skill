@@ -110,12 +110,14 @@ def get_field_info(reader: PdfReader):
 def write_field_info(pdf_path: str, json_output_path: str):
     reader = PdfReader(pdf_path)
     field_info = get_field_info(reader)
-    with open(json_output_path, "w") as f:
-        json.dump(field_info, f, indent=2)
+    with open(json_output_path, "w", encoding="utf-8") as f:
+        json.dump(field_info, f, indent=2, ensure_ascii=False)
     print(f"Wrote {len(field_info)} fields to {json_output_path}")
 
 
 if __name__ == "__main__":
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8')
     if len(sys.argv) != 3:
         print("Usage: extract_form_field_info.py [input pdf] [output json]")
         sys.exit(1)

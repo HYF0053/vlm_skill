@@ -16,6 +16,25 @@ license: Proprietary. LICENSE.txt has complete terms
 
 ---
 
+## Non-English Characters & Encoding
+
+When working with presentations containing non-English characters (e.g., Chinese, Japanese, Korean):
+
+1. **File I/O**: The provided Python scripts (unpack, pack, add_slide, clean) already use UTF-8. If you write your own scripts, always use `encoding="utf-8"`.
+
+2. **PptxGenJS Font**: To ensure correct rendering of Chinese or other non-English characters in `PptxGenJS`, you should specify a font face that supports those characters (e.g., "Microsoft YaHei" or "Arial").
+   ```javascript
+   slide.addText("你好，世界", { 
+     x: 1, y: 1, 
+     fontFace: "Microsoft YaHei", // Or other system font
+     fontSize: 24 
+   });
+   ```
+
+3. **XML Editing**: When manually editing `slide{N}.xml` files, ensuring the file is saved as UTF-8 is usually enough. For special symbols, use XML entities as described in [editing.md](editing.md).
+
+---
+
 ## Reading Content
 
 ```bash

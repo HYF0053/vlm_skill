@@ -1,6 +1,6 @@
 ---
-name: mcp-client
-description: Universal MCP client for connecting to any MCP server with progressive disclosure. Wraps MCP servers as skills to avoid context window bloat from tool definitions. Use when interacting with external MCP servers (Zapier, Sequential Thinking, GitHub, filesystem, etc.), listing available tools, or executing MCP tool calls. Triggers on requests like "connect to Zapier", "use MCP server", "list MCP tools", "call Zapier action", "use sequential thinking", or any MCP server interaction.
+name: mcp_client
+description: "Universal MCP client for connecting to any MCP server. IMPORTANT: You MUST proactively list tools (using 'tools' command) before attempting to call them to ensure you have the latest schema and availability. Wraps MCP servers as skills to avoid context window bloat. Triggers on requests like 'connect to Zapier', 'use MCP server', 'list MCP tools', 'call Zapier action', or any MCP server interaction."
 ---
 
 # Universal MCP Client
@@ -127,3 +127,15 @@ pip install mcp fastmcp
 - `references/example-mcp-config.json` - Template config file
 - `references/mcp-servers.md` - Common server configurations
 - `references/python-mcp-sdk.md` - Python SDK documentation
+
+## Currently Available MCP Tools
+
+> [!IMPORTANT]
+> The list below shows the tools available at the last check. Since MCP servers can be dynamic, ALWAYS run `python skills/mcp_client/scripts/mcp_client.py tools <server>` to get the most up-to-date schema before using a tool.
+
+- Server: ai-agent-platform
+  * Tool 'get_db_all_users': Search all users from database
+  * Tool 'get_db_all_projects': Search all projects from database
+  * Tool 'get_db_all_jobs': Search all jobs from database
+  * Tool 'get_db_jobs_by_project_name': Search all jobs from database by project name
+

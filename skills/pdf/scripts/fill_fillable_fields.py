@@ -9,7 +9,7 @@ from extract_form_field_info import get_field_info
 
 
 def fill_pdf_fields(input_pdf_path: str, fields_json_path: str, output_pdf_path: str):
-    with open(fields_json_path) as f:
+    with open(fields_json_path, encoding="utf-8") as f:
         fields = json.load(f)
     fields_by_page = {}
     for field in fields:
@@ -88,6 +88,8 @@ def monkeypatch_pydpf_method():
 
 
 if __name__ == "__main__":
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8')
     if len(sys.argv) != 4:
         print("Usage: fill_fillable_fields.py [input pdf] [field_values.json] [output pdf]")
         sys.exit(1)

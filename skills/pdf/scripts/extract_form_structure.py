@@ -89,6 +89,8 @@ def extract_form_structure(pdf_path):
 
 
 def main():
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8')
     if len(sys.argv) != 3:
         print("Usage: extract_form_structure.py <input.pdf> <output.json>")
         sys.exit(1)
@@ -99,8 +101,8 @@ def main():
     print(f"Extracting structure from {pdf_path}...")
     structure = extract_form_structure(pdf_path)
 
-    with open(output_path, "w") as f:
-        json.dump(structure, f, indent=2)
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(structure, f, indent=2, ensure_ascii=False)
 
     print(f"Found:")
     print(f"  - {len(structure['pages'])} pages")
