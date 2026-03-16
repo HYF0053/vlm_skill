@@ -71,9 +71,9 @@ def create_ui(handler):
             # --- TAB 3: Memory Manager ---
             with gr.Tab("🧠 Memory Manager"):
                 gr.Markdown(
-                    "## 🧠 持久記憶管理\n\n"
-                    "查看所有已儲存的 Session 記憶。同一個 Session Key = 同一份記憶，跨裝置、跨 session 都能接續。\n\n"
-                    "📁 存放路徑：`data/memory/`　　🔄 每 **10** 輪自動壓縮一次摘要"
+                    "## 🧠 結構化持久記憶管理\n\n"
+                    "查看所有已儲存的 Session 記憶。現在改為由 AI 自行決定要記住哪些事實與偏好。\n\n"
+                    "📁 存放路徑：`data/memory/`　　🎯 記憶模式：結構化事實與偏好"
                 )
                 with gr.Row():
                     refresh_mem_btn = gr.Button("🔄 重新整理記憶列表", variant="primary")

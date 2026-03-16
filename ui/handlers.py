@@ -2,7 +2,7 @@ import os
 import gradio as gr
 from utils.helpers import classify_uploaded_file, encode_image, get_ollama_models, get_vllm_models, compute_memory_params, get_token_estimate
 from core.agent import create_dynamic_agent, run_agent_stream
-from core.memory import make_llm_summariser, prune_checkpointer
+from core.memory import ThreadMemory
 from langchain_openai import ChatOpenAI
 
 class UIHandler:
@@ -49,61 +49,47 @@ class UIHandler:
                 memory_params = None
                 print(f"[UIHandler] Could not detect context length for {model_name}, using defaults.")
 
-            persistent_context = self.memory_store.get_session_start_context(session_key, include_recent_n=memory_params["recent_messages_keep"] if memory_params else None)
-            base_system_prompt = (system_prompt or "") + (persistent_context or "")
-
-            # Skill prompt & Final System Prompt computation
+            # 1. Initialize Skill Middleware with Memory Store for structured prompt injection
             from core.skills import SkillMiddleware
-            mw = SkillMiddleware(self.skill_repo)
+            mw = SkillMiddleware(self.skill_repo, memory_store=self.memory_store, session_key=session_key)
             
-            # 使用 middleware 的 tools 列表（這是正確注册的工具）
+            # The tools are now managed by the middleware, including the new 'upsert_memory'
             tools_list = mw.tools
             
-            # Replicate the middleware's addendum logic for UI transparency (完整版本，與舊程式碼一致)
+            # 2. Get the structured memory context (User Profile, Facts, etc.)
+            # This is now handled inside SkillMiddleware.wrap_model_call, 
+            # but for UI visibility we can still construct it here if we want to show 'final_system_prompt'
+            structured_context = self.memory_store.get_session_system_context(session_key)
+            base_system_prompt = (system_prompt or "") + structured_context
+
+            # Replicate the middleware's addendum logic for UI transparency
             skills_addendum = (
                 "\n\n"
                 "================================================================\n"
                 "KNOWLEDGE SKILL LIBRARY (READ-ONLY REFERENCE — NOT CALLABLE)\n"
                 "================================================================\n"
-                "The following are skill LOOKUP KEYS, NOT tools or functions.\n"
-                "You MUST NOT call them directly. They do not exist as callable tools.\n\n"
                 f"{mw.skills_prompt}\n\n"
                 "----------------------------------------------------------------\n"
-                "HOW TO USE A SKILL (mandatory workflow):\n"
-                "  Step 1: Call load_skill_overview(skill_name=\"<skill key above>\")\n"
-                "  Step 2: Read the overview, then call read_skill_file(...) if needed\n"
-                "  Step 3: Apply the skill instructions yourself, OR\n"
-                "          run a helper script with execute_script(...), OR\n"
-                "          run a CLI command with run_cli_command(...)\n\n"
                 "CALLABLE TOOLS (all tools you may invoke directly):\n"
-                "  - load_skill_overview(skill_name: str) -> str\n"
-                "  - read_skill_file(skill_name: str, file_path: str) -> str\n"
-                "  - execute_script(skill_name: str, script_path: str, script_args: str = \"\") -> str\n"
-                "      Run a Python script from the skill's scripts/ folder.\n"
-                "      Example: execute_script('pdf', 'scripts/convert_pdf_to_images.py', 'doc.pdf /tmp/out')\n"
-                "  - run_cli_command(command: str, working_directory: str = \"\") -> str\n"
-                "      Run any shell/CLI command (pdftotext, pip install, python -c ..., etc.)\n"
-                "      Example: run_cli_command('pdftotext input.pdf output.txt', '/tmp')\n"
-                "  - run_python_code(code: str, working_directory: str = \"\") -> str\n"
-                "      Write Python code you compose yourself and execute it immediately.\n"
-                "      Use this when you want to implement something based on skill examples\n"
-                "      (e.g., from SKILL.md code blocks) without needing a pre-existing script.\n"
-                "      Example: run_python_code(\"from reportlab.pdfgen import canvas\\nc = canvas.Canvas('out.pdf')\\n...\", 'C:/output')\n"
+                "  - upsert_memory(key, value, mem_type='fact')\n"
+                "  - load_skill_overview(skill_name)\n"
+                "  - read_skill_file(skill_name, file_path)\n"
+                "  - execute_script(skill_name, script_path, script_args)\n"
+                "  - run_cli_command(command, working_directory)\n"
+                "  - run_python_code(code, working_directory)\n"
                 "================================================================"
             )
             final_system_prompt = base_system_prompt + skills_addendum
 
             # Calculate current usage breakdown (Estimated)
-            from utils.helpers import generate_usage_html, get_model_context_len
+            from utils.helpers import generate_usage_html
             current_mem = self.memory_store.load_thread(session_key)
             cpt = memory_params["chars_per_token"] if memory_params else 1.8
             
-            # Categories based on user preferences
             input_prompt = get_token_estimate(len(query), cpt)
             input_context = get_token_estimate(len(final_system_prompt), cpt)
             input_history = get_token_estimate(sum(len(m.get("content", "")) for m in current_mem.recent_messages), cpt)
             
-            # Initial usage object
             usage = {
                 "input_prompt": input_prompt,
                 "input_context": input_context,
@@ -113,8 +99,8 @@ class UIHandler:
                 "total": input_prompt + input_context + input_history
             }
             
-            # Agent & Message preparation
-            agent = create_dynamic_agent(provider, api_url, model_name, self.global_checkpointer, [mw], base_system_prompt, tools_list)
+            # Agent preparation (SkillMiddleware will handle the system prompt injection in LangGraph)
+            agent = create_dynamic_agent(provider, api_url, model_name, self.global_checkpointer, [mw], system_prompt, tools_list)
             message_content = [{"type": "text", "text": query}]
             if file_upload:
                 if file_type == 'image':
@@ -148,35 +134,19 @@ class UIHandler:
             # Memory save
             final_answer = chatbot_history[-1][1]
             try:
-                summ_llm = ChatOpenAI(model=model_name, api_key="ollama" if provider=="Ollama" else "EMPTY", base_url=api_url if api_url.endswith("/v1") else f"{api_url}/v1", temperature=0)
-                summariser = make_llm_summariser(summ_llm)
+                # Simple turn record (No automatic summarization)
+                updated_mem = self.memory_store.record_turn(session_key, query, final_answer)
+                log_lines.append("🧠 Long-term memory turn recorded.")
                 
-                # Record turn and also update cumulative usage
-                rec_gen = self.memory_store.record_turn(session_key, query, final_answer, summariser, memory_params=memory_params)
-                updated_mem = None
-                try:
-                    while True:
-                        status = next(rec_gen)
-                        log_lines.append(f"🧠 {status}")
-                        yield chatbot_history, "\n\n".join(log_lines), final_system_prompt, usage_html
-                except StopIteration as e: updated_mem = e.value
-
-                # Save the usage breakdown to the persisted memory
                 if updated_mem:
                     updated_mem.usage = usage
                     self.memory_store.save_thread(updated_mem)
-
-                if updated_mem and updated_mem.summary and updated_mem.last_summarised_at_turn == updated_mem.turn_count:
-                    prune_gen = prune_checkpointer(self.global_checkpointer, session_key, updated_mem.summary, keep_recent_turns=memory_params["keep_recent_turns"] if memory_params else None)
-                    try:
-                        while True:
-                            status = next(prune_gen)
-                            log_lines.append(f"✂️ {status}")
-                            yield chatbot_history, "\n\n".join(log_lines), final_system_prompt, usage_html
-                    except StopIteration: pass
+                
+                yield chatbot_history, "\n\n".join(log_lines), final_system_prompt, usage_html
             except Exception as e:
                 log_lines.append(f"⚠️ Memory error: {e}")
                 yield chatbot_history, "\n\n".join(log_lines), final_system_prompt, usage_html
+
         except Exception as e:
             log_lines.append(f"❌ Error: {e}")
             yield chatbot_history, "\n\n".join(log_lines), final_system_prompt, usage_html
@@ -213,13 +183,21 @@ class UIHandler:
             return [["(尚無記憶)", "-", "-", "-", "-"]]
         rows = []
         for t in threads:
-            summary_preview = (t.summary[:80] + "…") if len(t.summary) > 80 else (t.summary or "(無)")
+            # Create a preview from facts if available
+            preview = ""
+            if t.facts:
+                preview = f"Facts: {len(t.facts)} | " + (t.facts[-1][:50] + "...") if t.facts else ""
+            elif t.preferences:
+                preview = f"Prefs: {len(t.preferences)}"
+            else:
+                preview = "(無結構化資料)"
+                
             rows.append([
                 t.session_key,
                 str(t.turn_count),
-                str(len(t.summary)),
+                str(len(t.facts) + len(t.preferences)),
                 t.last_updated_at[:16].replace("T", " "),
-                summary_preview,
+                preview,
             ])
         return rows
 
@@ -228,21 +206,32 @@ class UIHandler:
         if not key:
             return "(請輸入 Session Key)"
         mem = self.memory_store.load_thread(key.strip())
-        if not mem.summary and not mem.recent_messages:
+        if not mem.recent_messages and not mem.facts and not mem.preferences:
             return f"找不到 key='{key.strip()}' 的記憶，或該 key 尚無內容。"
+        
         lines = [
             f"🔑 Session Key: {mem.session_key}",
-            f"📊 總輪數: {mem.turn_count}　最後摘要於第 {mem.last_summarised_at_turn} 輪",
+            f"📊 總輪數: {mem.turn_count}",
             f"🕐 建立: {mem.created_at[:16]}　更新: {mem.last_updated_at[:16]}",
             "",
-            "─── 摘要 ───",
-            mem.summary or "(無)",
+            "─── 👤 用戶檔案 (User Profile) ───",
+            str(mem.user_profile) if mem.user_profile else "(無)",
             "",
-            "─── 最近幾輪對話 ───",
+            "─── ⚙️ 用戶偏好 (Preferences) ───",
+            str(mem.preferences) if mem.preferences else "(無)",
+            "",
+            "─── 🚀 專案狀態 (Project Status) ───",
+            str(mem.current_project_status) if mem.current_project_status else "(無)",
+            "",
+            "─── 💡 重要事實 (Facts) ───",
+            "\n".join(f"- {f}" for f in mem.facts) if mem.facts else "(無)",
+            "",
+            "─── 💬 最近幾輪對話 ───",
         ]
         for m in mem.recent_messages[-6:]:
             role = "👤 使用者" if m.get("role") == "user" else "🤖 AI"
-            lines.append(f"{role}: {m.get('content', '')[:200]}")
+            content = m.get("content", "")
+            lines.append(f"{role}: {content[:200]}{'...' if len(content)>200 else ''}")
         return "\n".join(lines)
 
     def delete_memory(self, key):

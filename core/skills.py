@@ -163,28 +163,47 @@ def _create_tools_for_repo(repo: SkillRepository):
     
     return [load_skill_overview, read_skill_file, execute_script, run_cli_command, run_python_code]
 
-def create_skill_tools(repo: SkillRepository):
-    """為向後兼容返回字典格式的工具註冊表。"""
+def create_skill_tools(repo: SkillRepository, memory_store: Any = None, session_key: str = "main"):
+    """
+    Returns a dictionary of tools, including the core memory tool if memory_store is provided.
+    """
     tools = _create_tools_for_repo(repo)
-    return {
+    registry = {
         "load_skill_overview": tools[0],
         "read_skill_file": tools[1],
         "execute_script": tools[2],
         "run_cli_command": tools[3],
         "run_python_code": tools[4],
     }
+    
+    if memory_store:
+        @tool
+        def upsert_memory(key: str, value: str, mem_type: str = "fact") -> str:
+            """
+            Update structured long-term memory. 
+            mem_type can be 'fact' (adds to a list), 'preference' (overwrites key), 
+            'profile' (overwrites user profile key), or 'project' (overwrites project status key).
+            Use this to remember important details like user background, project OS, or specific preferences.
+            """
+            return memory_store.upsert_memory(session_key, key, value, mem_type)
+        
+        registry["upsert_memory"] = upsert_memory
+        
+    return registry
 
 class SkillMiddleware(AgentMiddleware):
-    # 必須要有 tools 屬性，create_agent 才能正確註冊這些工具
+    # The tools available to the agent
     tools = []
     
-    def __init__(self, repo: SkillRepository):
+    def __init__(self, repo: SkillRepository, memory_store: Any = None, session_key: str = "main"):
         self.repo = repo
+        self.memory_store = memory_store
+        self.session_key = session_key
         self.refresh_skills_prompt()
         
-        # 使用工廠函數創建綁定到此 repo 的工具實例
-        # 這些工具會被 langchain 註冊為可調用工具
-        self.tools = _create_tools_for_repo(repo)
+        # Create tools including the memory tool
+        tool_dict = create_skill_tools(repo, memory_store, session_key)
+        self.tools = list(tool_dict.values())
 
     def refresh_skills_prompt(self):
         import re
@@ -213,6 +232,7 @@ class SkillMiddleware(AgentMiddleware):
         self.skills_prompt = "\n\n".join(skills_list) if skills_list else "No skills available."
 
     def wrap_model_call(self, request: ModelRequest, handler: Callable[[ModelRequest], ModelResponse]) -> ModelResponse:
+        # 1. Build Skill Library Documentation
         skills_addendum = (
             "\n\n"
             "================================================================\n"
@@ -229,6 +249,8 @@ class SkillMiddleware(AgentMiddleware):
             "          run a helper script with execute_script(...), OR\n"
             "          run a CLI command with run_cli_command(...)\n\n"
             "CALLABLE TOOLS (all tools you may invoke directly):\n"
+            "  - upsert_memory(key: str, value: str, mem_type: str = 'fact') -> str\n"
+            "      Save important information to long-term memory.\n"
             "  - load_skill_overview(skill_name: str) -> str\n"
             "  - read_skill_file(skill_name: str, file_path: str) -> str\n"
             "  - execute_script(skill_name: str, script_path: str, script_args: str = \"\") -> str\n"
@@ -246,6 +268,13 @@ class SkillMiddleware(AgentMiddleware):
             "  Example: 'C:/Users/name/document.pdf' instead of 'C:\\Users\\name\\document.pdf'\n"
             "================================================================"
         )
+        
+        # 2. Add Structured Memory if available
+        memory_addendum = ""
+        if self.memory_store:
+            memory_addendum = self.memory_store.get_session_system_context(self.session_key)
+            
         orig = request.system_message.content
-        new_content = orig + skills_addendum if isinstance(orig, str) else list(orig) + [{"type": "text", "text": skills_addendum}]
+        new_content = orig + memory_addendum + skills_addendum
+        
         return handler(request.override(system_message=SystemMessage(content=new_content)))
