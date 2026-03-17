@@ -1,93 +1,74 @@
+#!/usr/bin/env python3
 import sys
-import os
 import argparse
+import os
+import json
+import requests
 import uuid
+from datetime import datetime
 
-# Add project root to path for imports
-sys.path.append("/home/ubuntu/ai-agent-platform")
+CONFIG_PATH = os.path.normpath(os.path.join(os.path.dirname(__file__), "../../../config/rag.json"))
 
-from adapters.outbound.rag.qdrant_rag_adapter import QdrantRAGAdapter
-from adapters.outbound.embeddings.vllm_embedding_adapter import VLLMEmbeddingAdapter
-from infrastructure.config.settings import settings
+class SimpleRagService:
+    def __init__(self, config):
+        self.qdrant_config = config.get("qdrant", {})
+        self.embedding_config = config.get("embedding", {})
+        self.qdrant_url = f"http://{self.qdrant_config.get('host')}:{self.qdrant_config.get('port')}"
+        self.embedding_url = f"{self.embedding_config.get('base_url')}/v1/embeddings"
+
+    def get_embedding(self, text):
+        payload = {"model": self.embedding_config.get("model"), "input": text}
+        resp = requests.post(self.embedding_url, json=payload, timeout=10)
+        resp.raise_for_status()
+        return resp.json()["data"][0]["embedding"]
+
+    def upsert_point(self, collection, vector, payload):
+        point_id = str(uuid.uuid4())
+        data = {
+            "points": [
+                {
+                    "id": point_id,
+                    "vector": vector,
+                    "payload": payload
+                }
+            ]
+        }
+        url = f"{self.qdrant_url}/collections/{collection}/points?wait=true"
+        resp = requests.put(url, json=data, timeout=10)
+        resp.raise_for_status()
+        return point_id
 
 def main():
-    parser = argparse.ArgumentParser(description="Upsert a fact or document chunk into Qdrant VDB.")
-    parser.add_argument("content", help="The text content to store.")
-    parser.add_argument("-c", "--collection", default="user_memory", help="Collection name (default: user_memory)")
-    parser.add_argument("-s", "--source", default="manual_entry", help="Source metadata (e.g. filename or 'user_input')")
-    parser.add_argument("--metadata", help="JSON string for additional metadata", default="{}")
+    parser = argparse.ArgumentParser(description="Upsert data to RAG Vector Database")
+    parser.add_argument("content", help="The content to store")
+    parser.add_argument("--collection", "-c", default="agent_long_memory", help="Target collection")
+    parser.add_argument("--source", "-s", default="conversation", help="Source metadata")
+    parser.add_argument("--metadata", "-m", type=str, help="Additional metadata as JSON string")
     
     args = parser.parse_args()
-
-    # Init Embedding
-    embedding_port = VLLMEmbeddingAdapter(
-        base_url=settings.EMBEDDING_BASE_URL,
-        model=settings.EMBEDDING_MODEL
-    )
     
-    # Init RAG Adapter
-    # Note: We might need to ensure the collection exists. 
-    # Current adapter doesn't auto-create in _connect, so we handle it here or in adapter.
-    
-    rag_adapter = QdrantRAGAdapter(
-        host=settings.QDRANT_HOST,
-        port=settings.QDRANT_PORT,
-        collection=args.collection,
-        embedding_port=embedding_port
-    )
-    
-    # Check if connected (collection might not exist yet)
-    if not rag_adapter.client:
-        print(f"Collection '{args.collection}' does not exist. Attempting to create it...")
-        # Re-init with a dummy collection to get the client, or just use qdrant_client directly
-        from qdrant_client import QdrantClient
-        from qdrant_client.models import Distance, VectorParams
+    if not os.path.exists(CONFIG_PATH):
+        print("Error: Config not found")
+        sys.exit(1)
         
-        client = QdrantClient(host=settings.QDRANT_HOST, port=settings.QDRANT_PORT)
-        dim = embedding_port.get_dimension()
-        client.create_collection(
-            collection_name=args.collection,
-            vectors_config=VectorParams(size=dim, distance=Distance.COSINE)
-        )
-        print(f"Created collection: {args.collection}")
-        # Re-init adapter
-        rag_adapter = QdrantRAGAdapter(
-            host=settings.QDRANT_HOST,
-            port=settings.QDRANT_PORT,
-            collection=args.collection,
-            embedding_port=embedding_port
-        )
-
-    import json
-    from datetime import datetime, timezone
+    with open(CONFIG_PATH, 'r') as f:
+        config = json.load(f)
+        
+    service = SimpleRagService(config)
     
     try:
-        extra_meta = json.loads(args.metadata)
-    except:
-        extra_meta = {}
-
-    # 2026 Standard Metadata Schema
-    meta = {
-        "source": args.source,
-        "type": extra_meta.get("type", "knowledge"),
-        "importance": extra_meta.get("importance", 3),
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "session_id": os.environ.get("SESSION_ID", "default"),
-    }
-    # Merge remaining keys from extra_meta
-    for k, v in extra_meta.items():
-        if k not in meta:
-            meta[k] = v
-    
-    success = rag_adapter.add_documents([args.content], [meta])
-    
-    if success:
-        print(f"Successfully added to {args.collection} with metadata: {meta}")
-    else:
-        print(f"Failed to add to {args.collection}")
+        meta = json.loads(args.metadata) if args.metadata else {}
+        meta["content"] = args.content
+        meta["source"] = args.source
+        meta["timestamp"] = datetime.now().isoformat()
+        
+        vector = service.get_embedding(args.content)
+        point_id = service.upsert_point(args.collection, vector, meta)
+        
+        print(f"Successfully upserted point to {args.collection}. ID: {point_id}")
+    except Exception as e:
+        print(f"Upsert failed: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":
-    # Add project root to path for imports
-    sys.path.append("/home/ubuntu/ai-agent-platform")
     main()

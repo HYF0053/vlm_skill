@@ -114,7 +114,11 @@ execute_script(
 ```python
 # 示例：直接處理一段長文字
 import sys
-sys.path.insert(0, "/home/ubuntu/vlm_skill/skills/map_reduce/scripts")
+import os
+# 自動解析腳本路徑
+script_dir = os.path.abspath(os.path.join(os.getcwd(), "skills/map_reduce/scripts"))
+if script_dir not in sys.path:
+    sys.path.insert(0, script_dir)
 from map_reduce_engine import MapReduceEngine, LLMConfig
 
 # LLMConfig() 會自動從環境變數 VLLM_BASE_URL / VLLM_API_KEY / VLLM_MODEL 讀取設定

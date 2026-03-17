@@ -117,7 +117,7 @@ class UIHandler:
             os.environ["SESSION_ID"]    = session_key
 
             # Agent preparation (SkillMiddleware will handle the system prompt injection in LangGraph)
-            agent = create_dynamic_agent(provider, api_url, model_name, self.global_checkpointer, [mw], system_prompt, tools_list)
+            agent, llm = create_dynamic_agent(provider, api_url, model_name, self.global_checkpointer, [mw], system_prompt, tools_list)
             message_content = [{"type": "text", "text": query}]
             if file_upload:
                 if file_type == 'image':
@@ -144,7 +144,7 @@ class UIHandler:
             config = {"configurable": {"thread_id": session_key}, "recursion_limit": int(max_agent_steps)}
             
             # Run stream
-            gen = run_agent_stream(agent, {"messages": [{"role": "user", "content": message_content}]}, config, log_lines, self.tool_registry, chatbot_history, final_system_prompt, usage=usage, memory_params=memory_params)
+            gen = run_agent_stream(agent, {"messages": [{"role": "user", "content": message_content}]}, config, log_lines, self.tool_registry, chatbot_history, final_system_prompt, usage=usage, memory_params=memory_params, llm=llm)
             for hist, logs, sys_prompt, usage_html in gen:
                 yield hist, logs, sys_prompt, usage_html, gr.update(), gr.update()
 

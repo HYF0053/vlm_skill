@@ -3,8 +3,9 @@ import os
 import argparse
 
 # Add project root to path for imports
-sys.path.append("/home/ubuntu/ai-agent-platform")
-sys.path.append("/home/ubuntu/vlm_skill")
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
+if project_root not in sys.path:
+    sys.path.append(project_root)
 
 from core.memory import MemoryStore
 

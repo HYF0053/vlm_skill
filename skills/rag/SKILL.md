@@ -5,11 +5,11 @@ description: Use this skill for Retrieval-Augmented Generation (RAG) capabilitie
 
 # RAG (Retrieval-Augmented Generation) Skill
 
-This skill allows you to retrieve documents from the internal Knowledge Base (Vector Database) maintained by the `ai-agent-platform`. The knowledge base contains information about Leadtek's GPU products, systems, workstations, and company documents.
+This skill allows you to retrieve documents from the internal Knowledge Base (Vector Database) maintained within this project. The knowledge base contains information about Leadtek's GPU products, systems, workstations, and company documents.
 
 ## Available Scripts
 
-The scripts are located in `/home/ubuntu/vlm_skill/skills/rag/scripts/`.
+The scripts are located in `skills/rag/scripts/`.
 
 ### 1. `search_vdb.py`
 
@@ -17,7 +17,7 @@ This script searches the vector database using hybrid search (Keyword + Vector) 
 
 **Usage:**
 ```bash
-python3 /home/ubuntu/vlm_skill/skills/rag/scripts/search_vdb.py "your search query" [--limit LIMIT] [-c COLLECTION_NAME]
+python skills/rag/scripts/search_vdb.py "your search query" [--limit LIMIT] [-c COLLECTION_NAME]
 ```
 
 **Options:**
@@ -33,10 +33,10 @@ python3 /home/ubuntu/vlm_skill/skills/rag/scripts/search_vdb.py "your search que
 **Example:**
 ```bash
 # Search across all collections for GPU specifications
-python3 /home/ubuntu/vlm_skill/skills/rag/scripts/search_vdb.py "Leadtek RTX A6000 specs" --limit 3
+python skills/rag/scripts/search_vdb.py "Leadtek RTX A6000 specs" --limit 3
 
 # Search strictly within the system KB collection
-python3 /home/ubuntu/vlm_skill/skills/rag/scripts/search_vdb.py "WS650 supported GPU" -c hw_system_kb
+python skills/rag/scripts/search_vdb.py "WS650 supported GPU" -c hw_system_kb
 ```
 
 ### 2. `retrieve_context.py`
@@ -45,7 +45,7 @@ This script behaves similarly to `search_vdb.py`, but its output is formatted op
 
 **Usage:**
 ```bash
-python3 /home/ubuntu/vlm_skill/skills/rag/scripts/retrieve_context.py "query" [--max_tokens MAX] [-c COLLECTION_NAME]
+python skills/rag/scripts/retrieve_context.py "query" [--max_tokens MAX] [-c COLLECTION_NAME]
 ```
 
 ### 3. `upsert_to_vdb.py` (動態寫入 / 長期記憶)
@@ -64,20 +64,7 @@ python3 /home/ubuntu/vlm_skill/skills/rag/scripts/retrieve_context.py "query" [-
 
 **用法示範：**
 ```bash
-python3 /home/ubuntu/vlm_skill/skills/rag/scripts/upsert_to_vdb.py "專案 A 的權限設計邏輯為..." -c agent_long_memory -s conversation --metadata '{"type": "knowledge", "importance": 4}'
+python skills/rag/scripts/upsert_to_vdb.py "專案 A 的權限設計邏輯為..." -c agent_long_memory -s conversation --metadata '{"type": "knowledge", "importance": 4}'
 ```
 
-### 4. 批量文件匯入 (Bulk Ingest)
-
-```bash
-cd /home/ubuntu/ai-agent-platform
-python3 ingest_markdown_to_qdrant.py
-```
-*Note: Make sure your new `.md` files are placed within the target directories configured by the platform (e.g., `/home/ubuntu/ai-agent-platform/hw_product_md/GPU/`) before running the ingest script.*
-
-## Implementation Details
-
-If you need deeper integration or customization for RAG, the source modules are securely loaded from:
-- **Core Orchestration:** `/home/ubuntu/ai-agent-platform/domain/services/rag_service.py`
-- **Qdrant Vector Adapter:** `/home/ubuntu/ai-agent-platform/adapters/outbound/rag/qdrant_rag_adapter.py`
-- **Document Chunking & Ingest:** `/home/ubuntu/ai-agent-platform/ingest_markdown_to_qdrant.py`
+If you need deeper integration or customization for RAG, please refer to the project's core modules.

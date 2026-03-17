@@ -29,13 +29,13 @@ def _load_api_key() -> str:
     """Resolve Tavily API key from multiple sources (first valid wins).
 
     Order:
-      1. config/tools.json  (vlm_skill canonical config)
+      1. config/tools.json  (canonical config)
       2. TAVILY_API_KEY environment variable
-      3. /home/ubuntu/ai-agent-platform/.env  (legacy fallback)
+      3. .env file in project root (legacy fallback)
     """
     # Priority 1: config/tools.json relative to vlm_skill root
     config_path = os.path.normpath(
-        os.path.join(os.path.dirname(__file__), "../../../..", "config", "tools.json")
+        os.path.join(os.path.dirname(__file__), "../../..", "config", "tools.json")
     )
     if os.path.exists(config_path):
         try:
@@ -52,9 +52,8 @@ def _load_api_key() -> str:
     if key and key != "tvly-placeholder":
         return key
 
-    # Priority 3: ai-agent-platform .env
     env_path = os.path.normpath(
-        os.path.join(os.path.dirname(__file__), "../../../../ai-agent-platform/.env")
+        os.path.join(os.path.dirname(__file__), "../../../..", ".env")
     )
     if os.path.exists(env_path):
         with open(env_path) as f:
@@ -96,9 +95,7 @@ def search(
             "title": "Error: TAVILY_API_KEY not configured",
             "url": "",
             "content": (
-                "Tavily API key is missing. Set it in:\n"
-                "  /home/ubuntu/vlm_skill/config/tools.json\n"
-                "  → { \"tavily\": { \"api_key\": \"tvly-...\" } }"
+                "Tavily API key is missing. Please set your 'api_key' in 'config/tools.json'."
             ),
             "score": 0,
         }]

@@ -24,7 +24,15 @@ def create_dynamic_agent(provider: str, api_url: str, model_name: str, checkpoin
             "Use them to help the user. "
             "IMPORTANT: Always respond in Traditional Chinese (正體中文). "
             "Do not include any thinking process, reasoning, or internal thoughts in your response. "
-            "Just provide the final answer directly in Traditional Chinese."
+            "Just provide the final answer directly in Traditional Chinese.\n\n"
+            "When using skills and answering questions, please follow this retrieval priority order:\n"
+            "1. Current Context (Short-term): If the information is within the current conversation window, answer directly.\n"
+            "2. RAG / Memory (Long-term):\n"
+            "   Trigger Conditions: Involving 'past decisions', 'past discussions', 'user preferences', or 'project specifications'.\n"
+            "3. MCP Servers (Real-time/External Data):\n"
+            "   Trigger Conditions: When needing to read external services (e.g., GitHub PR, Slack messages) or perform specific actions.\n"
+            "4. Web Search (External Online Knowledge):\n"
+            "   Trigger Conditions: When internal memory has no results or the question involves general latest external technical knowledge."
         )
 
     # 如果有提供 tools 列表，則傳遞給 create_agent
@@ -36,7 +44,7 @@ def create_dynamic_agent(provider: str, api_url: str, model_name: str, checkpoin
         middleware=middleware,
         checkpointer=checkpointer,
     )
-    return agent
+    return agent, llm
 
 def try_execute_text_tool_calls(content: str, log_lines: list, tool_registry: dict) -> tuple[bool, str]:
     """Detect and execute <tool_call> JSON blocks found in plain-text AI content."""
@@ -67,7 +75,7 @@ def try_execute_text_tool_calls(content: str, log_lines: list, tool_registry: di
     remaining = pattern.sub("", content).strip()
     return executed_any, remaining
 
-def run_agent_stream(agent, inputs, config, log_lines, tool_registry, chatbot_history, final_system_prompt="", usage=None, memory_params=None):
+def run_agent_stream(agent, inputs, config, log_lines, tool_registry, chatbot_history, final_system_prompt="", usage=None, memory_params=None, llm=None):
     """Generator to run agent and yield chatbot history, logs, system prompt, and usage HTML."""
     from utils.helpers import generate_usage_html, get_token_estimate
     current_output = ""
@@ -203,9 +211,31 @@ def run_agent_stream(agent, inputs, config, log_lines, tool_registry, chatbot_hi
     except Exception as e:
         _flush_streaming_buffer()
         err = str(e)
-        msg = "⚠️ Agent exceeded max steps." if "recursion" in err.lower() else f"❌ Error: {err}"
+        is_recursion = "recursion" in err.lower()
+        msg = "⚠️ Agent exceeded max steps." if is_recursion else f"❌ Error: {err}"
         log_lines.append(msg)
-        chatbot_history[-1][1] = current_output or err
+        
+        if is_recursion and llm:
+            log_lines.append("🤖 Generating progress summary...")
+            yield chatbot_history, "\n\n".join(log_lines), final_system_prompt, generate_usage_html(usage, max_tokens)
+            
+            logs_text = "\n".join(log_lines[-20:])
+            summary_prompt = (
+                "您是一個任務總結助手。AI Agent 在執行任務時達到了最大步數限制，目前被迫停止。\n"
+                "請根據以下的執行日誌（Logs），總結目前的進度、已經完成的事項、尚未完成的部分，並詢問用戶是否需要繼續（增加步數）或就此結束。\n\n"
+                "執行日誌：\n"
+                f"{logs_text}\n\n"
+                "請務必使用 正體中文 (Traditional Chinese) 回答，並直接提供摘要（包含當前進度、成果、待辦事項及詢問用戶意向），不要包含任何開場白。"
+            )
+            try:
+                summary_res = llm.invoke(summary_prompt)
+                current_output = summary_res.content
+            except Exception as sum_err:
+                current_output = f"⚠️ 達到步數限制，且摘要生成失敗: {sum_err}"
+        else:
+            current_output = current_output or err
+
+        chatbot_history[-1][1] = current_output
         usage_html = generate_usage_html(usage, max_tokens)
         yield chatbot_history, "\n\n".join(log_lines), final_system_prompt, usage_html
 

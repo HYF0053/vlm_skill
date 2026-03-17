@@ -133,7 +133,7 @@ pip install mcp fastmcp
 > [!IMPORTANT]
 > The list below shows the tools available at the last check. Since MCP servers can be dynamic, ALWAYS run `python skills/mcp_client/scripts/mcp_client.py tools <server>` to get the most up-to-date schema before using a tool.
 
-- Server: ai-agent-platform
+- Server: local-db-server
   * Tool 'get_db_all_users': Search all users from database
   * Tool 'get_db_all_projects': Search all projects from database
   * Tool 'get_db_all_jobs': Search all jobs from database

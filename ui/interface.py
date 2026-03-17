@@ -39,8 +39,21 @@ def create_ui(handler):
                 with gr.Accordion("📝 System Prompt Settings", open=False):
                     system_prompt_input = gr.TextArea(
                         label="System Prompt", 
-                        value="You are an intelligent assistant with access to a library of capabilities (skills). Use them to help the user. IMPORTANT: Always respond in Traditional Chinese (正體中文). Do not include any thinking process, reasoning, or internal thoughts in your response. Just provide the final answer directly in Traditional Chinese.", 
-                        lines=3
+                        value=(
+                            "You are an intelligent assistant with access to a library of capabilities (skills). "
+                            "Use them to help the user. IMPORTANT: Always respond in Traditional Chinese (正體中文). "
+                            "Do not include any thinking process, reasoning, or internal thoughts in your response. "
+                            "Just provide the final answer directly in Traditional Chinese.\n\n"
+                            "When using skills and answering questions, please follow this retrieval priority order:\n"
+                            "1. Current Context (Short-term): If the information is within the current conversation window, answer directly.\n"
+                            "2. RAG / Memory (Long-term):\n"
+                            "   Trigger Conditions: Involving 'past decisions', 'past discussions', 'user preferences', or 'project specifications'.\n\n"
+                            "3. MCP Servers (Real-time/External Data):\n"
+                            "   Trigger Conditions: When needing to read external services (e.g., GitHub PR, Slack messages) or perform specific actions.\n\n"
+                            "4. Web Search (External Online Knowledge):\n"
+                            "   Trigger Conditions: When internal memory has no results or the question involves general latest external technical knowledge."
+                        ),
+                        lines=10
                     )
 
                 user_prompt_input = gr.Textbox(label="💬 User Query", placeholder="Enter your command... (Press Enter to send)", lines=3)

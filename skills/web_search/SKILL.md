@@ -115,4 +115,4 @@ API key is managed via the platform's **Settings Tab** (Dynamic Configuration).
 Resolution order:
 1. **Platform Settings UI** (Injected via `TAVILY_API_KEY` env var) ← **Recommended**
 2. `config/tools.json` → `{ "tavily": { "api_key": "tvly-..." } }`
-3. `/home/ubuntu/ai-agent-platform/.env` (Legacy fallback)
+3. `.env` file in project root (Legacy fallback)
