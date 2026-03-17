@@ -117,11 +117,9 @@ import sys
 sys.path.insert(0, "/home/ubuntu/vlm_skill/skills/map_reduce/scripts")
 from map_reduce_engine import MapReduceEngine, LLMConfig
 
-config = LLMConfig(
-    base_url="http://10.1.1.7:9000/v1",
-    api_key="EMPTY",
-    model="Qwen/Qwen3-VL-32B-Instruct",
-)
+# LLMConfig() 會自動從環境變數 VLLM_BASE_URL / VLLM_API_KEY / VLLM_MODEL 讀取設定
+# 不需要也不應該手動指定 URL，讓它自動繼承當前 agent 的 LLM 設定
+config = LLMConfig()
 engine = MapReduceEngine(config)
 
 long_text = """（在這裡放入長文字）"""

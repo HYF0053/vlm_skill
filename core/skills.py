@@ -130,7 +130,7 @@ def _create_tools_for_repo(repo: SkillRepository):
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
         try:
-            result = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace", timeout=120, cwd=skill.path, env=env)
+            result = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace", timeout=600, cwd=skill.path, env=env)
             return f"[stdout]\n{result.stdout}\n[stderr]\n{result.stderr}\n[exit code] {result.returncode}"
         except Exception as e: return f"Error: {e}"
 
@@ -141,7 +141,7 @@ def _create_tools_for_repo(repo: SkillRepository):
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
         try:
-            result = subprocess.run(command, shell=True, capture_output=True, encoding="utf-8", errors="replace", timeout=120, cwd=cwd, env=env)
+            result = subprocess.run(command, shell=True, capture_output=True, encoding="utf-8", errors="replace", timeout=600, cwd=cwd, env=env)
             return f"[stdout]\n{result.stdout}\n[stderr]\n{result.stderr}\n[exit code] {result.returncode}"
         except Exception as e: return f"Error: {e}"
 
@@ -155,7 +155,7 @@ def _create_tools_for_repo(repo: SkillRepository):
         env["PYTHONIOENCODING"] = "utf-8"
         try:
             with open(tmp_path, "w", encoding="utf-8") as f: f.write(code)
-            result = subprocess.run([sys.executable, tmp_path], capture_output=True, encoding="utf-8", errors="replace", timeout=120, cwd=cwd, env=env)
+            result = subprocess.run([sys.executable, tmp_path], capture_output=True, encoding="utf-8", errors="replace", timeout=600, cwd=cwd, env=env)
             return f"[stdout]\n{result.stdout}\n[stderr]\n{result.stderr}\n[exit code] {result.returncode}"
         except Exception as e: return f"Error: {e}"
         finally:
@@ -176,19 +176,6 @@ def create_skill_tools(repo: SkillRepository, memory_store: Any = None, session_
         "run_python_code": tools[4],
     }
     
-    if memory_store:
-        @tool
-        def upsert_memory(key: str, value: str, mem_type: str = "fact") -> str:
-            """
-            Update structured long-term memory. 
-            mem_type can be 'fact' (adds to a list), 'preference' (overwrites key), 
-            'profile' (overwrites user profile key), or 'project' (overwrites project status key).
-            Use this to remember important details like user background, project OS, or specific preferences.
-            """
-            return memory_store.upsert_memory(session_key, key, value, mem_type)
-        
-        registry["upsert_memory"] = upsert_memory
-        
     return registry
 
 class SkillMiddleware(AgentMiddleware):
@@ -249,8 +236,6 @@ class SkillMiddleware(AgentMiddleware):
             "          run a helper script with execute_script(...), OR\n"
             "          run a CLI command with run_cli_command(...)\n\n"
             "CALLABLE TOOLS (all tools you may invoke directly):\n"
-            "  - upsert_memory(key: str, value: str, mem_type: str = 'fact') -> str\n"
-            "      Save important information to long-term memory.\n"
             "  - load_skill_overview(skill_name: str) -> str\n"
             "  - read_skill_file(skill_name: str, file_path: str) -> str\n"
             "  - execute_script(skill_name: str, script_path: str, script_args: str = \"\") -> str\n"

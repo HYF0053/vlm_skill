@@ -6,6 +6,7 @@ import threading
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from pathlib import Path
+from contextlib import contextmanager
 from typing import Any, Callable, Optional, Generator
 
 # --- Constants & Config ---
@@ -40,14 +41,14 @@ class ThreadMemory:
 
 # --- Persistence Layer ---
 class FileLock:
-    _locks: dict[str, threading.Lock] = {}
+    _locks: dict[str, threading.RLock] = {}
     _meta_lock = threading.Lock()
 
     @classmethod
-    def get(cls, path: str) -> threading.Lock:
+    def get(cls, path: str) -> threading.RLock:
         with cls._meta_lock:
             if path not in cls._locks:
-                cls._locks[path] = threading.Lock()
+                cls._locks[path] = threading.RLock()
             return cls._locks[path]
 
 class MemoryStore:
@@ -59,27 +60,48 @@ class MemoryStore:
         safe_key = re.sub(r"[^a-zA-Z0-9_\-]", "_", session_key)
         return self.data_dir / f"thread_{safe_key}.json"
 
+    @contextmanager
+    def _lock_session(self, session_key: str) -> Generator[ThreadMemory, None, None]:
+        """Provides a thread-safe context for loading, modifying, and saving memory."""
+        path = self._thread_path(session_key)
+        lock = FileLock.get(str(path))
+        with lock:
+            mem = self.load_thread(session_key)
+            yield mem
+            self.save_thread(mem)
+
     def load_thread(self, session_key: str) -> ThreadMemory:
         path = self._thread_path(session_key)
         if not path.exists():
             return ThreadMemory(session_key=session_key)
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                # Filter data to only include fields present in ThreadMemory
-                valid_fields = {k: v for k, v in data.items() if k in ThreadMemory.__dataclass_fields__}
-                return ThreadMemory(**valid_fields)
-        except Exception as e:
-            print(f"Error loading thread {session_key}: {e}")
-            return ThreadMemory(session_key=session_key)
+        
+        lock = FileLock.get(str(path))
+        with lock:
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                    if not content.strip():
+                        return ThreadMemory(session_key=session_key)
+                    data = json.loads(content)
+                    valid_fields = {k: v for k, v in data.items() if k in ThreadMemory.__dataclass_fields__}
+                    return ThreadMemory(**valid_fields)
+            except Exception as e:
+                print(f"Error loading thread {session_key}: {e}")
+                return ThreadMemory(session_key=session_key)
 
     def save_thread(self, mem: ThreadMemory) -> None:
         mem.last_updated_at = datetime.now(timezone.utc).isoformat()
         path = self._thread_path(mem.session_key)
         lock = FileLock.get(str(path))
         with lock:
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(asdict(mem), f, ensure_ascii=False, indent=2)
+            temp_path = path.with_suffix(".tmp")
+            try:
+                with open(temp_path, "w", encoding="utf-8") as f:
+                    json.dump(asdict(mem), f, ensure_ascii=False, indent=2)
+                temp_path.replace(path)
+            except Exception as e:
+                print(f"Error saving thread {mem.session_key}: {e}")
+                if temp_path.exists(): temp_path.unlink()
 
     def get_session_system_context(self, session_key: str) -> str:
         """Constructs the system context based on structured memory."""
@@ -121,19 +143,17 @@ class MemoryStore:
 
     def record_turn(self, session_key: str, user_message: str, ai_message: str) -> ThreadMemory:
         """Saves a turn to history. No automatic summarization here."""
-        mem = self.load_thread(session_key)
-        mem.turn_count += 1
-        
-        # Keep history manageable in the JSON, but the actual 'pruning' happens in LangGraph checkpointer
-        mem.recent_messages.append({"role": "user", "content": user_message[:2000], "ts": datetime.now(timezone.utc).isoformat()})
-        mem.recent_messages.append({"role": "assistant", "content": ai_message[:2000], "ts": datetime.now(timezone.utc).isoformat()})
-        
-        # Keep only last 20 messages in JSON for performance
-        if len(mem.recent_messages) > 20:
-            mem.recent_messages = mem.recent_messages[-20:]
-
-        self.save_thread(mem)
-        return mem
+        with self._lock_session(session_key) as mem:
+            mem.turn_count += 1
+            
+            # Keep history manageable in the JSON, but the actual 'pruning' happens in LangGraph checkpointer
+            mem.recent_messages.append({"role": "user", "content": user_message[:2000], "ts": datetime.now(timezone.utc).isoformat()})
+            mem.recent_messages.append({"role": "assistant", "content": ai_message[:2000], "ts": datetime.now(timezone.utc).isoformat()})
+            
+            # Keep only last 20 messages in JSON for performance
+            if len(mem.recent_messages) > 20:
+                mem.recent_messages = mem.recent_messages[-20:]
+            return mem
 
     def upsert_memory(self, session_key: str, key: str, value: Any, mem_type: str = "fact") -> str:
         """
@@ -141,24 +161,37 @@ class MemoryStore:
         mem_type: 'fact' (append to list), 'preference' (overwrite key), 
                   'profile' (overwrite key), 'project' (overwrite key)
         """
-        mem = self.load_thread(session_key)
-        
-        if mem_type == "fact":
-            mem.facts.append(str(value))
-            msg = f"Fact added: {value}"
-        elif mem_type == "preference":
-            mem.preferences[key] = value
-            msg = f"Preference updated: {key} = {value}"
-        elif mem_type == "profile":
-            mem.user_profile[key] = value
-            msg = f"User profile updated: {key} = {value}"
-        elif mem_type == "project":
-            mem.current_project_status[key] = value
-            msg = f"Project status updated: {key} = {value}"
-        else:
-            return f"Unknown memory type: {mem_type}"
+        # Normalize key
+        key = key.strip()
+        msg = ""
 
-        self.save_thread(mem)
+        with self._lock_session(session_key) as mem:
+            if mem_type == "fact":
+                # Facts are append-only. We now include the key to make them searchable/clear.
+                fact_entry = f"{key}: {value}" if key else str(value)
+                mem.facts.append(fact_entry)
+                msg = f"Fact recorded under category '{key}': {value}"
+            elif mem_type == "preference":
+                old_val = mem.preferences.get(key)
+                mem.preferences[key] = value
+                msg = f"Preference updated: {key} = {value}"
+                if old_val:
+                    msg += f" (previous value '{old_val}' was overwritten. If you wanted to keep it, you should have merged it in the 'value'.)"
+            elif mem_type == "profile":
+                old_val = mem.user_profile.get(key)
+                mem.user_profile[key] = value
+                msg = f"User profile updated: {key} = {value}"
+                if old_val:
+                    msg += f" (previous value '{old_val}' was overwritten)"
+            elif mem_type == "project":
+                old_val = mem.current_project_status.get(key)
+                mem.current_project_status[key] = value
+                msg = f"Project status updated: {key} = {value}"
+                if old_val:
+                    msg += f" (previous value '{old_val}' was overwritten)"
+            else:
+                return f"Unknown memory type: {mem_type}"
+
         return msg
 
     def delete_thread(self, session_key: str) -> bool:

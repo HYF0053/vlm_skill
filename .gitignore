@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.mypy_cache/
+.pytest_cache/
+
+# Environment
+.venv/
+agentic_venv/
+venv/
+ENV/
+
+# Logs and Monitoring
+logs/
+*.log
+*_memory_log.csv
+Same_LLM_memory_log.csv
+
+# IDE
+.vscode/
+.idea/
+
+# Gradio
+.gradio/
+
+# Runtime Data
+knowledge/*
+!knowledge/.gitkeep
+uploads/*
+!uploads/.gitkeep
+
+# Generated Artifacts
+generated_flowchart
+generated_flowchart.png
+complete_agentic_rag_*.png
+image.png
+
+config/*

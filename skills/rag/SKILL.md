@@ -48,9 +48,26 @@ This script behaves similarly to `search_vdb.py`, but its output is formatted op
 python3 /home/ubuntu/vlm_skill/skills/rag/scripts/retrieve_context.py "query" [--max_tokens MAX] [-c COLLECTION_NAME]
 ```
 
-### 3. Ingesting New Documents
+### 3. `upsert_to_vdb.py` (動態寫入 / 長期記憶)
 
-If you have a collection of Markdown documents that you need to ingest into the Vector Database, you can run the master ingestion script natively provided by the `ai-agent-platform`:
+這是實現 **2026 年長短期記憶分離架構** 的核心工具。請將大型事實、對話摘要、專案文件存入 Qdrant。
+
+**推薦 Collection 名稱：** `agent_long_memory`
+
+**Qdrant 元數據架構 (Standard Payload):**
+| 欄位 | 說明 |
+| :--- | :--- |
+| `type` | `episodic` (事件), `plan` (規劃), `knowledge` (知識), `reflection` (反思) |
+| `importance` | 重要程度 (1-5) |
+| `session_id` | 對話 ID |
+| `timestamp` | 格式: `ISO-8601` |
+
+**用法示範：**
+```bash
+python3 /home/ubuntu/vlm_skill/skills/rag/scripts/upsert_to_vdb.py "專案 A 的權限設計邏輯為..." -c agent_long_memory -s conversation --metadata '{"type": "knowledge", "importance": 4}'
+```
+
+### 4. 批量文件匯入 (Bulk Ingest)
 
 ```bash
 cd /home/ubuntu/ai-agent-platform

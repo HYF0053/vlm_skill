@@ -39,11 +39,11 @@ def create_ui(handler):
                 with gr.Accordion("📝 System Prompt Settings", open=False):
                     system_prompt_input = gr.TextArea(
                         label="System Prompt", 
-                        value="You are an intelligent assistant with access to a library of capabilities (skills). Use them to help the user.", 
+                        value="You are an intelligent assistant with access to a library of capabilities (skills). Use them to help the user. IMPORTANT: Always respond in Traditional Chinese (正體中文). Do not include any thinking process, reasoning, or internal thoughts in your response. Just provide the final answer directly in Traditional Chinese.", 
                         lines=3
                     )
 
-                user_prompt_input = gr.TextArea(label="💬 User Query", placeholder="Enter your command...", lines=3)
+                user_prompt_input = gr.Textbox(label="💬 User Query", placeholder="Enter your command... (Press Enter to send)", lines=3)
                 
                 with gr.Row():
                     file_upload_input = gr.File(label="📎 Upload File", file_count="single")
@@ -63,7 +63,7 @@ def create_ui(handler):
                         provider_radio = gr.Radio(["vLLM", "Ollama"], label="LLM Provider", value="vLLM")
                         api_url_input = gr.Textbox(label="API URL", value="http://10.1.1.7:9000")
                         refresh_models_btn = gr.Button("🔄 Refresh Models")
-                        model_dropdown = gr.Dropdown(label="Select Model", choices=[], interactive=True)
+                        model_dropdown = gr.Dropdown(label="Select Model", choices=[], interactive=True, allow_custom_value=True)
                     with gr.Column():
                         image_max_size_slider = gr.Slider(512, 4096, value=1024, step=512, label="Max Image Dimension")
                         max_agent_steps_slider = gr.Slider(5, 50, value=15, step=1, label="Max Agent Steps")
@@ -122,23 +122,20 @@ def create_ui(handler):
             chatbot, 
             session_dropdown
         ]
-        execution_outputs = [chatbot, log_output, injected_prompt_output, visual_usage_status]
-
-        def clear_inputs():
-            return None, ""
+        execution_outputs = [chatbot, log_output, injected_prompt_output, visual_usage_status, file_upload_input, user_prompt_input]
 
         run_event = run_btn.click(
             handler.run_agent_task,
             inputs=execution_inputs,
             outputs=execution_outputs
-        ).then(clear_inputs, outputs=[file_upload_input, user_prompt_input])
+        )
         
         # Also trigger on Enter in the user prompt box
         submit_event = user_prompt_input.submit(
             handler.run_agent_task,
             inputs=execution_inputs,
             outputs=execution_outputs
-        ).then(clear_inputs, outputs=[file_upload_input, user_prompt_input])
+        )
 
         stop_btn.click(fn=None, cancels=[run_event, submit_event])
         
@@ -189,6 +186,6 @@ def create_ui(handler):
         
         # For buttons, we only update the dropdown value, which then triggers .change() automatically
         add_session_btn.click(handler.on_add_session_simple, outputs=[session_dropdown])
-        delete_session_btn.click(handler.on_delete_session_simple, inputs=[session_dropdown], outputs=[session_dropdown])
+        delete_session_btn.click(handler.on_delete_session_simple, inputs=[session_dropdown], outputs=[session_dropdown, chatbot])
 
     return demo

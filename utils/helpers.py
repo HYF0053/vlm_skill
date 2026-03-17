@@ -165,8 +165,8 @@ def generate_usage_html(usage: dict, max_tokens: int) -> str:
                 <b style="color: #111827;">📥 輸入 (Input Tokens):</b> <span style="color: #111827; font-weight: 600;">{usage.get('input_prompt', 0) + usage.get('input_context', 0) + usage.get('input_history', 0):,}</span>
                 <div style="padding-left: 15px; font-size: 12px; color: #6b7280;">
                     • 你輸入的提示詞: <span style="color: #4b5563;">{usage.get('input_prompt', 0):,}</span><br>
-                    • 專案開發環境/代碼上下文: <span style="color: #4b5563;">{usage.get('input_context', 0):,}</span><br>
-                    • 歷史對話回顧: <span style="color: #4b5563;">{usage.get('input_history', 0):,}</span>
+                     • 系統提示詞 (含技能庫描述): <span style="color: #4b5563;">{usage.get('input_context', 0):,}</span><br>
+                     • 歷史對話 (實際送入 Agent): <span style="color: #4b5563;">{usage.get('input_history', 0):,}</span>
                 </div>
             </div>
             <div style="margin-bottom: 4px;">

@@ -33,7 +33,7 @@ class UIHandler:
         try:
             if not model_name:
                 chatbot_history.append((query, "Please select a model."))
-                yield chatbot_history, "", "", ""
+                yield chatbot_history, "", "", "", gr.update(), gr.update()
                 return
 
             file_type = classify_uploaded_file(file_upload)
@@ -83,12 +83,22 @@ class UIHandler:
 
             # Calculate current usage breakdown (Estimated)
             from utils.helpers import generate_usage_html
-            current_mem = self.memory_store.load_thread(session_key)
             cpt = memory_params["chars_per_token"] if memory_params else 1.8
             
             input_prompt = get_token_estimate(len(query), cpt)
             input_context = get_token_estimate(len(final_system_prompt), cpt)
-            input_history = get_token_estimate(sum(len(m.get("content", "")) for m in current_mem.recent_messages), cpt)
+            
+            # 從 LangGraph checkpointer 讀取真正輸入給 agent 的歷史對話
+            try:
+                cp = self.global_checkpointer.get({"configurable": {"thread_id": session_key}})
+                if cp:
+                    history_msgs = cp.get("channel_values", {}).get("messages", [])
+                    actual_history_len = sum(len(str(getattr(m, "content", "") or "")) for m in history_msgs)
+                    input_history = get_token_estimate(actual_history_len, cpt)
+                else:
+                    input_history = 0
+            except Exception:
+                input_history = 0
             
             usage = {
                 "input_prompt": input_prompt,
@@ -99,6 +109,13 @@ class UIHandler:
                 "total": input_prompt + input_context + input_history
             }
             
+            # 將 LLM provider 設定同步寫入環境變數，讓子進程（execute_script / run_python_code）繼承
+            base_url_v1 = api_url.rstrip("/") + ("/v1" if not api_url.endswith("/v1") else "")
+            os.environ["VLLM_BASE_URL"] = base_url_v1
+            os.environ["VLLM_MODEL"]    = model_name
+            os.environ["VLLM_API_KEY"]  = "ollama" if provider == "Ollama" else "EMPTY"
+            os.environ["SESSION_ID"]    = session_key
+
             # Agent preparation (SkillMiddleware will handle the system prompt injection in LangGraph)
             agent = create_dynamic_agent(provider, api_url, model_name, self.global_checkpointer, [mw], system_prompt, tools_list)
             message_content = [{"type": "text", "text": query}]
@@ -122,14 +139,14 @@ class UIHandler:
             
             chatbot_history.append([user_display, "⏳ Initializing Agent..."])
             log_lines = ["⏳ Initializing Agent...", "⏳ Running Inference..."]
-            yield chatbot_history, "\n\n".join(log_lines), final_system_prompt, usage_html
+            yield chatbot_history, "\n\n".join(log_lines), final_system_prompt, usage_html, gr.update(), gr.update()
 
             config = {"configurable": {"thread_id": session_key}, "recursion_limit": int(max_agent_steps)}
             
             # Run stream
             gen = run_agent_stream(agent, {"messages": [{"role": "user", "content": message_content}]}, config, log_lines, self.tool_registry, chatbot_history, final_system_prompt, usage=usage, memory_params=memory_params)
             for hist, logs, sys_prompt, usage_html in gen:
-                yield hist, logs, sys_prompt, usage_html
+                yield hist, logs, sys_prompt, usage_html, gr.update(), gr.update()
 
             # Memory save
             final_answer = chatbot_history[-1][1]
@@ -142,14 +159,14 @@ class UIHandler:
                     updated_mem.usage = usage
                     self.memory_store.save_thread(updated_mem)
                 
-                yield chatbot_history, "\n\n".join(log_lines), final_system_prompt, usage_html
+                yield chatbot_history, "\n\n".join(log_lines), final_system_prompt, usage_html, None, ""
             except Exception as e:
                 log_lines.append(f"⚠️ Memory error: {e}")
-                yield chatbot_history, "\n\n".join(log_lines), final_system_prompt, usage_html
+                yield chatbot_history, "\n\n".join(log_lines), final_system_prompt, usage_html, None, ""
 
         except Exception as e:
             log_lines.append(f"❌ Error: {e}")
-            yield chatbot_history, "\n\n".join(log_lines), final_system_prompt, usage_html
+            yield chatbot_history, "\n\n".join(log_lines), final_system_prompt, usage_html, None, ""
 
     # --- Skill Editor Handlers ---
     def on_skill_select(self, skill_name):
@@ -296,7 +313,20 @@ class UIHandler:
         return gr.Dropdown(choices=keys, value=new_name)
 
     def on_delete_session_simple(self, session_key):
-        """刪除 Session 並由 dropdown.change 觸發後續"""
+        """刪除 Session（含磁碟記憶與 RAM checkpointer）並由 dropdown.change 觸發後續"""
+        # 清除 InMemorySaver 中該 session 的所有 RAM 對話記錄
+        try:
+            cp = self.global_checkpointer
+            if hasattr(cp, 'storage'):
+                keys_to_del = [k for k in cp.storage if (isinstance(k, tuple) and k[0] == session_key) or k == session_key]
+                for k in keys_to_del:
+                    del cp.storage[k]
+            if hasattr(cp, 'writes'):
+                keys_to_del = [k for k in cp.writes if (isinstance(k, tuple) and k[0] == session_key) or k == session_key]
+                for k in keys_to_del:
+                    del cp.writes[k]
+        except Exception as e:
+            print(f"[on_delete_session_simple] Checkpointer clear error: {e}")
         if not session_key:
             return gr.Dropdown()
         
@@ -307,7 +337,7 @@ class UIHandler:
             from core.memory import ThreadMemory
             self.memory_store.save_thread(ThreadMemory(session_key="main"))
             
-        return gr.Dropdown(choices=keys, value=keys[0])
+        return gr.Dropdown(choices=keys, value=keys[0]), []
 
     def _get_chatbot_history(self, session_key):
         """Helper: 將 MemoryStore 的格式轉為 Gradio Chatbot 格式 [[user, ai], ...]"""
