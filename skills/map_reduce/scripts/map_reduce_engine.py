@@ -31,7 +31,7 @@ from typing import Callable, Optional
 class LLMConfig:
     """LLM 連線設定，優先讀環境變數，fallback 到預設值。"""
     base_url: str = field(
-        default_factory=lambda: os.environ.get("VLLM_BASE_URL", "http://10.1.1.7:9000/v1")
+        default_factory=lambda: os.environ.get("VLLM_BASE_URL", "http://10.1.1.7:24131/v1")
     )
     api_key: str = field(
         default_factory=lambda: os.environ.get("VLLM_API_KEY", "EMPTY")

@@ -20,7 +20,6 @@ Core Rules – You MUST Follow These Strictly:
 - `preference`: 使用者明確要求的行為準則 (e.g., "不要用 emoji")。
 - `profile`: 用戶靜態事實 (e.g., "我是後端工程師")。
 - `project`: 目前 active 專案的小型設定 (e.g., "資料庫用 Postgres")。
-- `fact`: 已廢棄，請改用 **`rag` 技能** 存入 Qdrant。
 
 > [!IMPORTANT]
 > 若資訊超過一個段落或屬於知識片段，請務必主動調用 `rag` 技能下的 `upsert_to_vdb.py` 存入 **`agent_long_memory`** 集合。

@@ -71,7 +71,6 @@ class UIHandler:
                 f"{mw.skills_prompt}\n\n"
                 "----------------------------------------------------------------\n"
                 "CALLABLE TOOLS (all tools you may invoke directly):\n"
-                "  - upsert_memory(key, value, mem_type='fact')\n"
                 "  - load_skill_overview(skill_name)\n"
                 "  - read_skill_file(skill_name, file_path)\n"
                 "  - execute_script(skill_name, script_path, script_args)\n"
@@ -137,8 +136,10 @@ class UIHandler:
             usage["total"] = sum(v for k, v in usage.items() if k != "total")
             usage_html = generate_usage_html(usage, memory_params["max_model_len"] if memory_params else 4096)
             
+            
             chatbot_history.append([user_display, "⏳ Initializing Agent..."])
             log_lines = ["⏳ Initializing Agent...", "⏳ Running Inference..."]
+            
             yield chatbot_history, "\n\n".join(log_lines), final_system_prompt, usage_html, gr.update(), gr.update()
 
             config = {"configurable": {"thread_id": session_key}, "recursion_limit": int(max_agent_steps)}
@@ -151,14 +152,36 @@ class UIHandler:
             # Memory save
             final_answer = chatbot_history[-1][1]
             try:
-                # Simple turn record (No automatic summarization)
-                updated_mem = self.memory_store.record_turn(session_key, query, final_answer)
-                log_lines.append("🧠 Long-term memory turn recorded.")
+                # 更新長期記憶
+                updated_mem = None
+                gen_mem = self.memory_store.record_turn(session_key, query, final_answer, memory_params=memory_params, usage=usage)
+                
+                try:
+                    while True:
+                        status = next(gen_mem)
+                        log_lines.append(f"🧠 {status}")
+                        yield chatbot_history, "\n\n".join(log_lines), final_system_prompt, usage_html, gr.update(), gr.update()
+                except StopIteration as e:
+                    updated_mem = e.value
                 
                 if updated_mem:
                     updated_mem.usage = usage
                     self.memory_store.save_thread(updated_mem)
-                
+                            
+                # ─── 將目前的記憶狀態列在 Log 最下方 ───
+                final_mem = updated_mem if updated_mem else self.memory_store.load_thread(session_key)
+                if final_mem:
+                    log_lines.append("\n" + "="*40)
+                    log_lines.append("🗂️ 【當前被載入 RAM 的歷史記憶清單】")
+                        
+                    for m in final_mem.recent_messages:
+                        role = "👤 [User]" if m.get("role") == "user" else "🤖 [AI]"
+                        preview = m.get('content', '')
+                        if len(preview) > 100: preview = preview[:100] + "..."
+                        
+                        log_lines.append(f"{role} {m.get('ts', '')[:19].replace('T', ' ')}:\n{preview}\n")
+                    log_lines.append("="*40)
+
                 yield chatbot_history, "\n\n".join(log_lines), final_system_prompt, usage_html, None, ""
             except Exception as e:
                 log_lines.append(f"⚠️ Memory error: {e}")
@@ -200,11 +223,9 @@ class UIHandler:
             return [["(尚無記憶)", "-", "-", "-", "-"]]
         rows = []
         for t in threads:
-            # Create a preview from facts if available
+            # Create a preview from preferences if available
             preview = ""
-            if t.facts:
-                preview = f"Facts: {len(t.facts)} | " + (t.facts[-1][:50] + "...") if t.facts else ""
-            elif t.preferences:
+            if t.preferences:
                 preview = f"Prefs: {len(t.preferences)}"
             else:
                 preview = "(無結構化資料)"
@@ -212,7 +233,7 @@ class UIHandler:
             rows.append([
                 t.session_key,
                 str(t.turn_count),
-                str(len(t.facts) + len(t.preferences)),
+                str(len(t.preferences)),
                 t.last_updated_at[:16].replace("T", " "),
                 preview,
             ])
@@ -223,7 +244,7 @@ class UIHandler:
         if not key:
             return "(請輸入 Session Key)"
         mem = self.memory_store.load_thread(key.strip())
-        if not mem.recent_messages and not mem.facts and not mem.preferences:
+        if not mem.recent_messages and not mem.preferences:
             return f"找不到 key='{key.strip()}' 的記憶，或該 key 尚無內容。"
         
         lines = [
@@ -239,9 +260,6 @@ class UIHandler:
             "",
             "─── 🚀 專案狀態 (Project Status) ───",
             str(mem.current_project_status) if mem.current_project_status else "(無)",
-            "",
-            "─── 💡 重要事實 (Facts) ───",
-            "\n".join(f"- {f}" for f in mem.facts) if mem.facts else "(無)",
             "",
             "─── 💬 最近幾輪對話 ───",
         ]
@@ -288,17 +306,12 @@ class UIHandler:
         if not session_key:
             return [], "<div style='color: gray; font-size: 14px;'>請選擇或建立一個 Session...</div>"
         
+        if not (provider and api_url and model_name):
+            return [], "<div style='color: gray; font-size: 14px;'>選擇模型與 Session 後將顯示 Token 使用量...</div>"
+
         try:
-            # 1. 載入對話歷史
             history = self._get_chatbot_history(session_key)
-            
-            # 2. 更新 Token 使用量 (如果資訊充足)
-            usage_html = ""
-            if provider and api_url and model_name:
-                usage_html = self.get_usage_status(session_key, provider, api_url, model_name)
-            else:
-                usage_html = "<div style='color: gray; font-size: 14px;'>對話已載入位，選擇模型後將顯示 Token 使用量...</div>"
-                
+            usage_html = self.get_usage_status(session_key, provider, api_url, model_name)
             return history, usage_html
         except Exception as e:
             print(f"[UIHandler] Error in on_session_change: {e}")
@@ -350,3 +363,14 @@ class UIHandler:
             if u or a:
                 history.append([u, a])
         return history
+
+    def _format_history_table(self, mem) -> list:
+        if not mem: return []
+        data = []
+        for m in mem.recent_messages:
+            preview = m.get("content", "")
+            if len(preview) > 60: preview = preview[:60] + "..."
+            ts = m.get("ts", "")[:19].replace("T", " ") if m.get("ts") else ""
+            role = "👤 User" if m.get("role") == "user" else "🤖 AI"
+            data.append([role, preview, ts])
+        return data

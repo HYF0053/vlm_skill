@@ -7,7 +7,7 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from contextlib import contextmanager
-from typing import Any, Callable, Optional, Generator
+from typing import Any, Callable, Optional, Generator, List, Dict
 
 # --- Constants & Config ---
 DATA_DIR = Path(__file__).parent.parent / "data" / "memory"
@@ -24,7 +24,6 @@ class ThreadMemory:
     # Structured Memory
     user_profile: dict = field(default_factory=dict)
     current_project_status: dict = field(default_factory=dict)
-    facts: list[str] = field(default_factory=list)
     preferences: dict = field(default_factory=dict)
     
     recent_messages: list[dict] = field(default_factory=list)
@@ -124,11 +123,6 @@ class MemoryStore:
             status_text = "\n".join(f"  - {k}: {v}" for k, v in mem.current_project_status.items())
             parts.append(f"Current Project Status:\n{status_text}")
 
-        # 3. Known Facts
-        if mem.facts:
-            facts_text = "\n".join(f"  • {f}" for f in mem.facts)
-            parts.append(f"Important Facts:\n{facts_text}")
-
         if not parts:
             return ""
 
@@ -141,24 +135,26 @@ class MemoryStore:
             + "\n================================================================\n"
         )
 
-    def record_turn(self, session_key: str, user_message: str, ai_message: str) -> ThreadMemory:
-        """Saves a turn to history. No automatic summarization here."""
+    def record_turn(self, session_key: str, user_message: str, ai_message: str, memory_params: Optional[dict] = None, usage: Optional[dict] = None) -> Generator[str, None, ThreadMemory]:
+        """Saves a turn to history."""
         with self._lock_session(session_key) as mem:
             mem.turn_count += 1
             
-            # Keep history manageable in the JSON, but the actual 'pruning' happens in LangGraph checkpointer
+            # Keep history manageable in the JSON
             mem.recent_messages.append({"role": "user", "content": user_message[:2000], "ts": datetime.now(timezone.utc).isoformat()})
             mem.recent_messages.append({"role": "assistant", "content": ai_message[:2000], "ts": datetime.now(timezone.utc).isoformat()})
             
-            # Keep only last 20 messages in JSON for performance
+            # Force max 20 messages in JSON for performance
             if len(mem.recent_messages) > 20:
                 mem.recent_messages = mem.recent_messages[-20:]
+
+            yield "🧠 記憶已記錄。"
             return mem
 
-    def upsert_memory(self, session_key: str, key: str, value: Any, mem_type: str = "fact") -> str:
+    def upsert_memory(self, session_key: str, key: str, value: Any, mem_type: str = "preference") -> str:
         """
         Tool-callable method to update structured memory.
-        mem_type: 'fact' (append to list), 'preference' (overwrite key), 
+        mem_type: 'preference' (overwrite key), 
                   'profile' (overwrite key), 'project' (overwrite key)
         """
         # Normalize key
@@ -166,12 +162,7 @@ class MemoryStore:
         msg = ""
 
         with self._lock_session(session_key) as mem:
-            if mem_type == "fact":
-                # Facts are append-only. We now include the key to make them searchable/clear.
-                fact_entry = f"{key}: {value}" if key else str(value)
-                mem.facts.append(fact_entry)
-                msg = f"Fact recorded under category '{key}': {value}"
-            elif mem_type == "preference":
+            if mem_type == "preference":
                 old_val = mem.preferences.get(key)
                 mem.preferences[key] = value
                 msg = f"Preference updated: {key} = {value}"

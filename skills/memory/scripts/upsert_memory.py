@@ -13,8 +13,8 @@ def main():
     parser = argparse.ArgumentParser(description="Upsert short-term JSON memory (Preferences, Profile, Project).")
     parser.add_argument("key", help="The memory key (e.g., 'os', 'code_style')")
     parser.add_argument("value", help="The memory value content")
-    parser.add_argument("--type", choices=["preference", "profile", "project", "fact"], default="preference", 
-                        help="Memory type (Note: 'fact' is recommended for RAG instead)")
+    parser.add_argument("--type", choices=["preference", "profile", "project"], default="preference", 
+                        help="Memory type (preference, profile, project)")
     
     args = parser.parse_args()
     

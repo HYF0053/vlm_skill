@@ -117,8 +117,6 @@ def compute_memory_params(
 
     usable_chars = int(usable_tokens * chars_per_token)
     summary_char_budget = int(usable_chars * 0.40)
-    map_reduce_chunk_size = int(usable_chars * 0.20)
-    map_reduce_chunk_size = max(800, min(map_reduce_chunk_size, 4000))
     
     chars_per_turn = 600
     keep_recent_turns = max(2, min(int(usable_chars * 0.30 / chars_per_turn), 10))
@@ -129,7 +127,6 @@ def compute_memory_params(
         "usable_tokens":         usable_tokens,
         "usable_chars":          usable_chars,
         "summary_char_budget":   summary_char_budget,
-        "map_reduce_chunk_size": map_reduce_chunk_size,
         "keep_recent_turns":     keep_recent_turns,
         "recent_messages_keep":  recent_messages_keep,
         "chars_per_token":       chars_per_token,

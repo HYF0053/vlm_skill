@@ -74,7 +74,7 @@ def create_ui(handler):
                 with gr.Row():
                     with gr.Column():
                         provider_radio = gr.Radio(["vLLM", "Ollama"], label="LLM Provider", value="vLLM")
-                        api_url_input = gr.Textbox(label="API URL", value="http://10.1.1.7:9000")
+                        api_url_input = gr.Textbox(label="API URL", value="http://10.1.1.7:24131")
                         refresh_models_btn = gr.Button("🔄 Refresh Models")
                         model_dropdown = gr.Dropdown(label="Select Model", choices=[], interactive=True, allow_custom_value=True)
                     with gr.Column():
