@@ -1,58 +1,75 @@
 ---
 name: memory
-description: Mandatory! If user mentions RULES/HABITS/PERSONA, use `execute_script("memory", "scripts/upsert_memory.py", ...)`. If user mentions PROJECT FACTS/DOCUMENTS/PLANS, you MUST use `execute_script("rag", "scripts/upsert_to_vdb.py", ...)`. Do NOT mix them up!
+description: Manage long-term memory (Qdrant) and global preferences (JSON). URGENT: You MUST explicitly call the memory tool when rules/facts are mentioned or bugs are solved. DO NOT just reply "I will remember."
 ---
 
-Core Rules:
-1. **Immediate Update**: Don't wait for "remember this".
-2. **Key-Value (JSON)**: Use lowercase snake_case keys (e.g., `preferred_editor`).
-3. **Overwrite (JSON)**: Types `profile`, `preference` will replace existing keys.
+## 🚨 致命問題與嚴格行動準則 (CRITICAL Execution Timing)
 
-## Currently Available Memory Tools
+根據過去的行為紀錄，**你經常只在口頭上說「好的，我會記住」，卻沒有實際呼叫工具，導致記憶完全遺失！**
+為了徹底解決這個問題，請嚴格遵守以下「強制執行時機」：
 
-- **`scripts/upsert_memory.py`**: ONLY FOR USER PERSONA (habits, rules, OS, likes/dislikes).
-  - *Usage*: `execute_script("memory", "scripts/upsert_memory.py", "<key> '<value>' --type <type>")`
-  - *Types*: `preference` (user tastes), `profile` (facts about user), `agent_rules` (explicit directives for the agent).
-- **Trigger Conditions for JSON**:
-  - When learning about the user personally (OS, timezone), their tastes ("I prefer Python"), or exactly how the agent must act ("Always reply in...", "Don't use emoji").
+1. **收到 JSON 規則 / 偏好時：**
+   - 當使用者說：「之後都...」、「這是我習慣的格式...」、「你要遵守...」。
+   - ⚠️ **絕對不准先回答聊天！**你必須在看到提示的**當下這個回合 (turn)**，立刻主動呼叫 `upsert_memory.py`。
+   
+2. **獲得 Qdrant 專案重要資訊時：**
+   - 當你知道了這個專案的技術棧、DB Schema、或特別的設定時。
+   - ⚠️ **不要等使用者下令「幫我記起來」才存！**只要資訊有利於後續開發，你就必須**主動**使用 `upsert_memo_qdrant.py -c document_memory` 存下它。
 
-- **Trigger Conditions for QDRANT** (You MUST use Qdrant for these. Do NOT use JSON):
-  - **Project/Business Plans**: The user reveals a roadmap, marketing strategy, business plan, or project sequence (e.g., "我們下個月要推廣新產品", "接下來要實作付款功能").
-  - **Problem/Solution Archives**: You just solved a complex issue (tech bugs, strategy bottlenecks, data formatting) and the user wants to remember the solution ("記住這個解法").
-  - **Domain Facts & Data**: Information about the user's business ecosystem, client profiles, code architecture, or market trends (e.g., "主要客戶是 B2B 科技廠", "後端架構是 FastAPI", "這份 PDF 是 2026 Q3 趨勢").
-  - **Meeting / Document Notes**: Long-form context, meeting minutes, summaries of PDFs, or extensive research data.
-  - *Usage*: `execute_script("rag", "scripts/upsert_to_vdb.py", "<content> --collection agent_long_memory")`
-
-## 🧠 2026 記憶儲存準則 (Strict JSON vs. Qdrant Separation)
-
-| 存儲位置 | 定位 | 內容範例 |
-| :--- | :--- | :--- |
-| **JSON (Memory Skill)** | **User Persona & Rules** | 偏好、作業系統、AI 行動準則、格式要求、禁忌 | 
-| **Qdrant (RAG Skill)** | **External Facts** | 專案規劃、客戶資料、會議紀錄、產業趨勢、解決方案、技術文件 | 
-
-#### JSON 記憶分類 (mem_type):
-- `agent_rules`: Agent 行動最高指導原則 (e.g., "不要道歉", "回答要簡潔", "輸出前先思考")。
-- `preference`: 使用者的習慣與風格偏好 (e.g., "喜歡用 Python", "程式碼用 4 空格")。
-- `profile`: 用戶靜態事實 (e.g., "我是後端工程師", "時區是台北")。
-
-> [!IMPORTANT]
-> **絕對不要** 把專案文件、規劃、時間點、或長篇大論存入 JSON。任何非「用戶習慣」的資訊，必須存入 RAG (Qdrant)。
-
-⚠️ Strategic Guidance for High Quality Memory:
-──────────────────────────────────────────────
-- **Key Selection**: Use short, lowercase, snake_case English keys (e.g., `primary_os`, `naming_convention`).
-- **Value Quality**: Do NOT store vague values. 
-    - ❌ `execute_script("memory", "scripts/upsert_memory.py", "os Yes --type profile")`
-    - ✅ `execute_script("memory", "scripts/upsert_memory.py", "os 'Ubuntu 22.04 LTS' --type profile")`
-- **Avoid Redundancy**: If the information is already in your "STRUCTURED MEMORY" block and hasn't changed, don't call it again.
-- **Merge when needed**: If updating a `preference` for `code_style` and you already have "use tabs", update it to "use tabs, 4 spaces" if the user adds a new rule.
+3. **解決困難 Bug / 完成複雜重構時 (skill_workflow) ★最常忘記被記錄：**
+   - 當你花費多步完成了某段程式碼的修正，並且**測試/驗證通過**的那一刻。
+   - ⚠️ **絕對不要立刻對使用者說「任務完成」並結束對話，這樣工具就關閉了！**
+   - 你的倒數第二步動作，**必須**是先呼叫 `upsert_memo_qdrant.py -c skill_workflow` 將除錯經驗存入記憶庫。只有在「呼叫工具並確認儲存成功」之後，你才能發出結尾回覆「我已完成修正」。
 
 ---
 
-## 範例：
+## 什麼時候該觸發記憶？ (Trigger Patterns)
 
-```python
-# User: 我偏好用 Python，且我不喜歡用 emoji。
-execute_script("memory", "scripts/upsert_memory.py", "preferred_language Python --type profile")
-execute_script("memory", "scripts/upsert_memory.py", "emoji_usage none --type preference")
-```
+看到以下【明確句型】或【情境】時，請立刻採取行動（呼叫對應的腳本）：
+
+- **「記住...」 / 「幫我記下來...」** -> (存入 Qdrant `document_memory`)
+- **「以後都...」 / 「之後這專案都要...」** -> (存入 JSON `agent_rules`)
+- **「這是規則」 / 「規定是...」** -> (存入 JSON `preference` 或 `agent_rules`)
+- **「這個專案的架構是...」 / 「我們決定用...」** -> (主動存入 Qdrant `document_memory`)
+
+---
+
+## 記憶分類指南 (Where to store)
+
+不用過度糾結分類，請用**「影響範圍」**來判斷：
+
+### 1. 全域偏好與行動規則 (JSON Memory)
+跨專案、針對使用者的「全域設定」與「AI 行為準則」。
+- **呼叫方式**：
+  `execute_script("memory", "scripts/upsert_memory.py", "<key_name> '<value>' --type <agent_rules|preference|profile>")`
+  *(注意：key_name 請用小寫英文及底線，如 `ui_preference`)*
+- **範例**：
+  - 「我習慣用 Python 且縮排用 4 空格」(`preference`)
+  - 「之後都用這個格式寫」、「回答不要說廢話」(`agent_rules`)
+
+### 2. 專案知識與工作流 (Qdrant Memory)
+針對「當下專案」的事實、技術文件，或「剛剛解決的問題」。
+- **簡化版呼叫方式**：
+  `execute_script("memory", "scripts/upsert_memo_qdrant.py", "-c <collection> -i '<title_or_intent>' -t '<content>' --score 7")`
+  - `-c document_memory`：專案事實、架構、業務邏輯。
+  - `-c skill_workflow`：有效的除錯經驗、成功的任務步驟。
+  - `--score`：不用想太多，**預設給 `7` 即可**（若是絕對核心的架構才給 `10`，失敗嘗試給 `4`）。
+- **範例**：
+  - 「我這個專案用 FastAPI」(`document_memory`)
+  - 「剛剛解決了 CORS 問題，記下來」(`skill_workflow`)
+
+---
+
+## 最佳實踐與範例
+
+**情境 A：使用者明確下達規定 (Keyword: 之後都)**
+User: 之後寫程式都不要幫我加註解，我喜歡乾淨的 code。
+Tool: `execute_script("memory", "scripts/upsert_memory.py", "no_comments 'Do not write any comments in code' --type agent_rules")`
+
+**情境 B：剛完成一項複雜的任務 (主動觸發 - 回覆使用者前)**
+# AI 測試通過了程式碼！此時絕對不能直接回覆結束對話！
+Tool: `execute_script("memory", "scripts/upsert_memo_qdrant.py", "-c skill_workflow -i 'Fix FastAPI CORS' -t 'Added CORSMiddleware with allow_origins=[\"*\"] in main.py to fix connection issues.' --score 7")`
+# 工具跑完後，AI 再回覆：我已經修好了，並且記錄到記憶庫中了。
+
+**情境 C：需要回憶過去的專案知識**
+Tool: `execute_script("memory", "scripts/search_memo_qdrant.py", "FastAPI CORS -c skill_workflow")`

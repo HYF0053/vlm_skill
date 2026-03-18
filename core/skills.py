@@ -270,7 +270,20 @@ class SkillMiddleware(AgentMiddleware):
                 # Fallback if the skill's logic is missing
                 memory_addendum = "\n\n(Memory system logic unavailable.)\n"
             
+        import datetime
+        current_time_info = (
+            f"\n\n[System Info]\n"
+            f"Current Date and Time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+            f"Day of the Week: {datetime.datetime.now().strftime('%A')}\n"
+        )
+        
+        conflict_rule = (
+            "\n\n🚨 CRITICAL MEMORY RULE: The STRUCTURED MEMORY block above represents the ABSOLUTE TRUTH of the user's CURRENT status and preferences. "
+            "If past conversation history contradicts the Structured Memory (e.g. user changed their mind later), you MUST IGNORE the history and STRICTLY OBEY the Structured Memory. "
+            "If a user's preference is ALREADY recorded or up-to-date in the Structured Memory, DO NOT call `upsert_memory` again for it."
+        )
+            
         orig = request.system_message.content
-        new_content = orig + memory_addendum + skills_addendum
+        new_content = orig + current_time_info + memory_addendum + conflict_rule + skills_addendum
         
         return handler(request.override(system_message=SystemMessage(content=new_content)))

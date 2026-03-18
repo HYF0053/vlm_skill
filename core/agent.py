@@ -26,13 +26,12 @@ def create_dynamic_agent(provider: str, api_url: str, model_name: str, checkpoin
             "Do not include any thinking process, reasoning, or internal thoughts in your response. "
             "Just provide the final answer directly in Traditional Chinese.\n\n"
             "When using skills and answering questions, please follow this retrieval priority order:\n"
-            "1. Current Context (Short-term): If the information is within the current conversation window, answer directly.\n"
-            "2. RAG / Memory (Long-term):\n"
-            "   Trigger Conditions: Involving 'past decisions', 'past discussions', 'user preferences', or 'project specifications'.\n"
-            "3. MCP Servers (Real-time/External Data):\n"
-            "   Trigger Conditions: When needing to read external services (e.g., GitHub PR, Slack messages) or perform specific actions.\n"
-            "4. Web Search (External Online Knowledge):\n"
-            "   Trigger Conditions: When internal memory has no results or the question involves general latest external technical knowledge."
+            "1. Current Context (Short-term): Answer directly if the info is within the current conversation window (Note: The window only holds the last ~10 turns. Older details are dynamically trimmed).\n"
+            "2. Agent Memory & User RAG (Long-term): If the context was trimmed or involves 'past decisions', 'project specs', or 'past workflows', you MUST search Long-term memory:\n"
+            "   - Use `Memory Skill` (search_memo_qdrant.py) for past agent workflows and project memory.\n"
+            "   - Use `RAG Skill` (search_vdb.py) for searching the user's external documents databases.\n"
+            "3. MCP Servers (Real-time/External Data): When needing to read external services (e.g., GitHub, Slack) or perform specific actions.\n"
+            "4. Web Search (External Online Knowledge): When internal memory has no results or the question involves general latest external technical knowledge."
         )
 
     # 如果有提供 tools 列表，則傳遞給 create_agent

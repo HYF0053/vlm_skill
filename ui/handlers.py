@@ -64,7 +64,19 @@ class UIHandler:
             except (ImportError, ModuleNotFoundError):
                 structured_context = "\n\n(Memory logic unavailable.)\n"
             
-            base_system_prompt = (system_prompt or "") + structured_context
+            import datetime
+            current_time_info = (
+                f"\n\n[System Info]\n"
+                f"Current Date and Time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                f"Day of the Week: {datetime.datetime.now().strftime('%A')}\n"
+            )
+
+            conflict_rule = (
+                "\n\n🚨 CRITICAL MEMORY RULE: The STRUCTURED MEMORY block above represents the ABSOLUTE TRUTH of the user's CURRENT status and preferences. "
+                "If past conversation history contradicts the Structured Memory (e.g. user changed their mind later), you MUST IGNORE the history and STRICTLY OBEY the Structured Memory. "
+                "If a user's preference is ALREADY recorded or up-to-date in the Structured Memory, DO NOT call `upsert_memory` again for it."
+            )
+            base_system_prompt = (system_prompt or "") + current_time_info + structured_context + conflict_rule
 
             # Replicate the middleware's addendum logic for UI transparency
             skills_addendum = (
@@ -91,15 +103,15 @@ class UIHandler:
             input_prompt = get_token_estimate(len(query), cpt)
             input_context = get_token_estimate(len(final_system_prompt), cpt)
             
-            # 從 LangGraph checkpointer 讀取真正輸入給 agent 的歷史對話
+            # 取代 LangGraph checkpointer 的殘留狀態，改為使用我們自訂的 Smart Trimmed History
             try:
-                cp = self.global_checkpointer.get({"configurable": {"thread_id": session_key}})
-                if cp:
-                    history_msgs = cp.get("channel_values", {}).get("messages", [])
-                    actual_history_len = sum(len(str(getattr(m, "content", "") or "")) for m in history_msgs)
+                input_history = 0
+                formatted_history = []
+                if hasattr(mem, "recent_messages") and mem.recent_messages:
+                    actual_history_len = sum(len(str(m.get("content", ""))) for m in mem.recent_messages)
                     input_history = get_token_estimate(actual_history_len, cpt)
-                else:
-                    input_history = 0
+                    for m in mem.recent_messages:
+                        formatted_history.append({"role": m.get("role", "user"), "content": m.get("content", "")})
             except Exception:
                 input_history = 0
             
@@ -146,15 +158,31 @@ class UIHandler:
             
             yield chatbot_history, "\n\n".join(log_lines), final_system_prompt, usage_html, gr.update(), gr.update()
 
-            config = {"configurable": {"thread_id": session_key}, "recursion_limit": int(max_agent_steps)}
+            import uuid
+            ephemeral_thread_id = f"{session_key}_{uuid.uuid4().hex[:8]}"
+            config = {"configurable": {"thread_id": ephemeral_thread_id}, "recursion_limit": int(max_agent_steps)}
+            
+            messages_payload = formatted_history + [{"role": "user", "content": message_content}]
             
             # Run stream
-            gen = run_agent_stream(agent, {"messages": [{"role": "user", "content": message_content}]}, config, log_lines, self.tool_registry, chatbot_history, final_system_prompt, usage=usage, memory_params=memory_params, llm=llm)
+            gen = run_agent_stream(agent, {"messages": messages_payload}, config, log_lines, self.tool_registry, chatbot_history, final_system_prompt, usage=usage, memory_params=memory_params, llm=llm)
             for hist, logs, sys_prompt, usage_html in gen:
                 yield hist, logs, sys_prompt, usage_html, gr.update(), gr.update()
 
             # Memory save
             final_answer = chatbot_history[-1][1]
+            
+            # 從 log_lines 萃取本回合呼叫過的工具，附加到 final_answer 讓大腦維持「執行過動作的記憶」
+            executed_tools = set()
+            for line in log_lines:
+                if "Calling Tool:" in line:
+                    tool_name = line.split("Calling Tool:")[-1].strip()
+                    executed_tools.add(tool_name)
+            
+            if executed_tools:
+                tools_str = ", ".join(executed_tools)
+                final_answer += f"\n\n[📝 系統附註 (System Memory): 於此回覆中，AI 已成功執行了工具: {tools_str}。若設定已生效，後續無需重複呼叫。]"
+
             try:
                 # 更新長期記憶
                 updated_mem = None

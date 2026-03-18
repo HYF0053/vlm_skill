@@ -116,9 +116,12 @@ class MemoryStore:
             mem.recent_messages.append({"role": "user", "content": user_message[:2000], "ts": datetime.now(timezone.utc).isoformat()})
             mem.recent_messages.append({"role": "assistant", "content": ai_message[:2000], "ts": datetime.now(timezone.utc).isoformat()})
             
-            # Force max 20 messages in JSON for performance
-            if len(mem.recent_messages) > 20:
-                mem.recent_messages = mem.recent_messages[-20:]
+            # Smart Trimming: First 2 messages (anchor) + latest rolling messages
+            MAX_MSGS = 20
+            if len(mem.recent_messages) > MAX_MSGS:
+                anchor = mem.recent_messages[:2]
+                rolling = mem.recent_messages[-(MAX_MSGS - 2):]
+                mem.recent_messages = anchor + rolling
 
             yield "🧠 記憶已記錄。"
             return mem

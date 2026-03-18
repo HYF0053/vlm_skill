@@ -66,7 +66,7 @@ def create_ui(handler):
                         clear_btn = gr.Button("🧹 Clear Chat", scale=1)
 
                 with gr.Accordion("📜 Execution Logs & Technical Details", open=True):
-                    log_output = gr.Textbox(label="Thinking Process & Logs", lines=10, interactive=False)
+                    log_output = gr.Textbox(label="Thinking Process & Logs", lines=10, max_lines=15, interactive=False)
                     injected_prompt_output = gr.Textbox(label="Actual Injected System Prompt (ReadOnly)", lines=12, interactive=False)
 
             # --- TAB 2: Settings ---
