@@ -89,11 +89,13 @@ class MemoryStore:
                 return ThreadMemory(session_key=session_key)
 
     def save_thread(self, mem: ThreadMemory) -> None:
+        import uuid
         mem.last_updated_at = datetime.now(timezone.utc).isoformat()
         path = self._thread_path(mem.session_key)
         lock = FileLock.get(str(path))
         with lock:
-            temp_path = path.with_suffix(".tmp")
+            # 用 UUID 產生唯一的 temp 檔名，避免跨進程檔案衝突
+            temp_path = path.with_name(f"{path.stem}_{uuid.uuid4().hex[:8]}.tmp")
             try:
                 with open(temp_path, "w", encoding="utf-8") as f:
                     json.dump(asdict(mem), f, ensure_ascii=False, indent=2)
@@ -123,15 +125,14 @@ class MemoryStore:
             status_text = "\n".join(f"  - {k}: {v}" for k, v in mem.current_project_status.items())
             parts.append(f"Current Project Status:\n{status_text}")
 
-        if not parts:
-            return ""
+        content = "\n\n".join(parts) if parts else "(No structured memory recorded yet. Use 'memory' skill to save preferences/facts.)"
 
         return (
             "\n\n"
             "================================================================\n"
             "📌 STRUCTURED MEMORY (Known Context)\n"
             "================================================================\n"
-            + "\n\n".join(parts)
+            + content
             + "\n================================================================\n"
         )
 
@@ -151,39 +152,7 @@ class MemoryStore:
             yield "🧠 記憶已記錄。"
             return mem
 
-    def upsert_memory(self, session_key: str, key: str, value: Any, mem_type: str = "preference") -> str:
-        """
-        Tool-callable method to update structured memory.
-        mem_type: 'preference' (overwrite key), 
-                  'profile' (overwrite key), 'project' (overwrite key)
-        """
-        # Normalize key
-        key = key.strip()
-        msg = ""
 
-        with self._lock_session(session_key) as mem:
-            if mem_type == "preference":
-                old_val = mem.preferences.get(key)
-                mem.preferences[key] = value
-                msg = f"Preference updated: {key} = {value}"
-                if old_val:
-                    msg += f" (previous value '{old_val}' was overwritten. If you wanted to keep it, you should have merged it in the 'value'.)"
-            elif mem_type == "profile":
-                old_val = mem.user_profile.get(key)
-                mem.user_profile[key] = value
-                msg = f"User profile updated: {key} = {value}"
-                if old_val:
-                    msg += f" (previous value '{old_val}' was overwritten)"
-            elif mem_type == "project":
-                old_val = mem.current_project_status.get(key)
-                mem.current_project_status[key] = value
-                msg = f"Project status updated: {key} = {value}"
-                if old_val:
-                    msg += f" (previous value '{old_val}' was overwritten)"
-            else:
-                return f"Unknown memory type: {mem_type}"
-
-        return msg
 
     def delete_thread(self, session_key: str) -> bool:
         path = self._thread_path(session_key)

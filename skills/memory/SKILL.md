@@ -1,15 +1,24 @@
 ---
 name: memory
-description: Structured long-term memory system for remembering important user information, preferences, background, project state, and key facts. You MUST actively use this skill to ensure consistency across separate sessions.
+description: Mandatory long-term memory. Update IMMEDIATELY when user mentions preferences, OS/IDE, job, or project decisions. Use execute_script("memory", "scripts/upsert_memory.py", ...)
 ---
 
-Core Rules – You MUST Follow These Strictly:
-──────────────────────────────────────────────
-1. Whenever you see information that is likely to be useful in future conversations, **immediately** update the memory using the `memory` skill's scripts.
-2. Do NOT wait for the user to say “remember this”. Every preference, tool, or project detail mentioned should be saved.
-3. **Overwriting**: Understand that `profile`, `preference`, and `project` types will **replace** the existing value for the same key.
+Core Rules:
+1. **Immediate Update**: Don't wait for "remember this". If it's a fact/preference, save it now.
+2. **Key-Value**: Use lowercase snake_case keys (e.g., `preferred_editor`).
+3. **Overwrite**: Types `profile`, `preference`, `project` will replace existing keys.
 
-### 🧠 2026 記憶儲存準則 (JSON vs. Qdrant)
+## Currently Available Memory Tools
+
+- **`scripts/upsert_memory.py`**: Principal tool for short JSON memory (< 300 tokens).
+  - *Usage*: `execute_script("memory", "scripts/upsert_memory.py", "<key> '<value>' --type <type>")`
+  - *Types*: `preference` (behavior), `profile` (facts about user), `project` (active project settings).
+- **Trigger Conditions**: Update memory anytime the user mentions:
+  - OS, editor, browser, role/job, timezone, country.
+  - Likes/dislikes ("I prefer...", "Avoid...", "Don't use...").
+  - Project decisions (folder paths, database choice, framework).
+
+## 🧠 2026 記憶儲存準則 (JSON vs. Qdrant)
 
 | 類型 | 存儲位置 | 內容範例 | 判斷基準 |
 | :--- | :--- | :--- | :--- |
@@ -32,27 +41,6 @@ Core Rules – You MUST Follow These Strictly:
     - ✅ `execute_script("memory", "scripts/upsert_memory.py", "os 'Ubuntu 22.04 LTS' --type profile")`
 - **Avoid Redundancy**: If the information is already in your "STRUCTURED MEMORY" block and hasn't changed, don't call it again.
 - **Merge when needed**: If updating a `preference` for `code_style` and you already have "use tabs", update it to "use tabs, 4 spaces" if the user adds a new rule.
-
-Mandatory Trigger Conditions – You MUST update memory immediately when:
-───────────────────────────────────────────────────────────────────────────────
-- User mentions their OS, editor, IDE, browser, timezone, country/city, job title/role.
-- User expresses any preference: “I like / I hate / please / better if / avoid / don’t use…”
-- User gives project-related info: folder path, database, API key name, chosen framework/library, decision made.
-- User expresses a correction: "Actually, I use Windows, not Mac."
-
-### 使用腳本更新記憶 (Usage)
-
-請透過 `execute_script` 調用以下腳本進行寫入：
-
-**1. `upsert_memory.py` (JSON 偏好)**
-適合 < 300 tokens 的「性格、設定、偏好」。
-```bash
-# 語法：execute_script("memory", "scripts/upsert_memory.py", "<key> '<value>' --type <type>")
-execute_script("memory", "scripts/upsert_memory.py", "preferred_language Python --type profile")
-```
-
-**2. `rag` 技能下的 `upsert_to_vdb.py` (Qdrant 長期內容)**
-**強烈建議：** 超過一個段落或具知識性的資料，應存入 RAG 的 `agent_long_memory`。
 
 ---
 
