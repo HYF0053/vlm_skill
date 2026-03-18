@@ -1,6 +1,6 @@
 ---
 name: rag
-description: Use this skill for Retrieval-Augmented Generation (RAG) capabilities, searching internal vector databases (knowledge bases) regarding product documents, specifications, roadmaps, and guidelines.
+description: Mandatory tool for LONG-TERM EXTERNAL MEMORY (Knowledge, Project Plans, Business Documents, Client Data). Use this to search product docs AND to actively remember/record any long-form user facts into Qdrant (`upsert_to_vdb.py`).
 ---
 
 # RAG (Retrieval-Augmented Generation) Skill

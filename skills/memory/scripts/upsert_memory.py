@@ -29,10 +29,12 @@ def upsert_memory(store: MemoryStore, session_key: str, key: str, value: str, me
             msg = f"User profile updated: {key} = {value}"
             if old_val:
                 msg += f" (previous value '{old_val}' was overwritten)"
-        elif mem_type == "project":
-            old_val = mem.current_project_status.get(key)
-            mem.current_project_status[key] = value
-            msg = f"Project status updated: {key} = {value}"
+        elif mem_type == "agent_rules":
+            old_val = getattr(mem, "agent_rules", {}).get(key)
+            if not hasattr(mem, "agent_rules"):
+                mem.agent_rules = {}
+            mem.agent_rules[key] = value
+            msg = f"Agent rule updated: {key} = {value}"
             if old_val:
                 msg += f" (previous value '{old_val}' was overwritten)"
         else:
@@ -41,11 +43,11 @@ def upsert_memory(store: MemoryStore, session_key: str, key: str, value: str, me
     return msg
 
 def main():
-    parser = argparse.ArgumentParser(description="Upsert short-term JSON memory (Preferences, Profile, Project).")
-    parser.add_argument("key", help="The memory key (e.g., 'os', 'code_style')")
+    parser = argparse.ArgumentParser(description="Upsert JSON memory (ONLY for Preferences, Profile, and Agent Rules).")
+    parser.add_argument("key", help="The memory key (e.g., 'os', 'code_style', 'tone')")
     parser.add_argument("value", help="The memory value content")
-    parser.add_argument("--type", choices=["preference", "profile", "project"], default="preference", 
-                        help="Memory type (preference, profile, project)")
+    parser.add_argument("--type", choices=["preference", "profile", "agent_rules"], default="preference", 
+                        help="Memory type (preference, profile, agent_rules)")
     
     args = parser.parse_args()
     

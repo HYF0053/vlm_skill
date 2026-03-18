@@ -235,6 +235,10 @@ class SkillMiddleware(AgentMiddleware):
             "  Step 3: Apply the skill instructions yourself, OR\n"
             "          run a helper script with execute_script(...), OR\n"
             "          run a CLI command with run_cli_command(...)\n\n"
+            "CRITICAL BEHAVIORAL RULE:\n"
+            "  - You are stateless between sessions. You CANNOT 'remember' anything just by saying 'I will remember this'.\n"
+            "  - If the user states a rule, preference, habit, or project fact, you MUST IMMEDIATELY use `execute_script` to save it via the memory or rag skill.\n"
+            "  - DO NOT say 'Okay, I will answer shortly' without ACTUALLY running the script to save the rule.\n\n"
             "CALLABLE TOOLS (all tools you may invoke directly):\n"
             "  - load_skill_overview(skill_name: str) -> str\n"
             "  - read_skill_file(skill_name: str, file_path: str) -> str\n"
@@ -254,10 +258,17 @@ class SkillMiddleware(AgentMiddleware):
             "================================================================"
         )
         
-        # 2. Add Structured Memory if available
+        # 2. Add Structured Memory if available (Delegated to memory skill logic)
         memory_addendum = ""
         if self.memory_store:
-            memory_addendum = self.memory_store.get_session_system_context(self.session_key)
+            try:
+                # Dynamically delegate formatting to the memory skill if it exists
+                from skills.memory.lib.logic import format_memory_for_prompt
+                mem = self.memory_store.load_thread(self.session_key)
+                memory_addendum = format_memory_for_prompt(mem)
+            except (ImportError, ModuleNotFoundError):
+                # Fallback if the skill's logic is missing
+                memory_addendum = "\n\n(Memory system logic unavailable.)\n"
             
         orig = request.system_message.content
         new_content = orig + memory_addendum + skills_addendum

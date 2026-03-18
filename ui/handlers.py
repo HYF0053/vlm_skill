@@ -57,9 +57,13 @@ class UIHandler:
             tools_list = mw.tools
             
             # 2. Get the structured memory context (User Profile, Facts, etc.)
-            # This is now handled inside SkillMiddleware.wrap_model_call, 
-            # but for UI visibility we can still construct it here if we want to show 'final_system_prompt'
-            structured_context = self.memory_store.get_session_system_context(session_key)
+            try:
+                from skills.memory.lib.logic import format_memory_for_prompt
+                mem = self.memory_store.load_thread(session_key)
+                structured_context = format_memory_for_prompt(mem)
+            except (ImportError, ModuleNotFoundError):
+                structured_context = "\n\n(Memory logic unavailable.)\n"
+            
             base_system_prompt = (system_prompt or "") + structured_context
 
             # Replicate the middleware's addendum logic for UI transparency
@@ -258,10 +262,10 @@ class UIHandler:
             "─── ⚙️ 用戶偏好 (Preferences) ───",
             str(mem.preferences) if mem.preferences else "(無)",
             "",
-            "─── 🚀 專案狀態 (Project Status) ───",
-            str(mem.current_project_status) if mem.current_project_status else "(無)",
+            "─── 📜 AI 行動準則 (Agent Rules) ───",
+            str(getattr(mem, 'agent_rules', {})) if getattr(mem, 'agent_rules', {}) else "(無)",
             "",
-            "─── 💬 最近幾輪對話 ───",
+            "───  最近幾輪對話 ───",
         ]
         for m in mem.recent_messages[-6:]:
             role = "👤 使用者" if m.get("role") == "user" else "🤖 AI"

@@ -23,8 +23,8 @@ class ThreadMemory:
     turn_count: int = 0
     # Structured Memory
     user_profile: dict = field(default_factory=dict)
-    current_project_status: dict = field(default_factory=dict)
     preferences: dict = field(default_factory=dict)
+    agent_rules: dict = field(default_factory=dict)
     
     recent_messages: list[dict] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
@@ -104,37 +104,8 @@ class MemoryStore:
                 print(f"Error saving thread {mem.session_key}: {e}")
                 if temp_path.exists(): temp_path.unlink()
 
-    def get_session_system_context(self, session_key: str) -> str:
-        """Constructs the system context based on structured memory."""
-        mem = self.load_thread(session_key)
-        parts = []
-        
-        # 1. User Profile & Preferences
-        profile_parts = []
-        if mem.user_profile:
-            p_text = ", ".join(f"{k}: {v}" for k, v in mem.user_profile.items())
-            profile_parts.append(f"User Profile: {p_text}")
-        if mem.preferences:
-            pref_text = ", ".join(f"{k}: {v}" for k, v in mem.preferences.items())
-            profile_parts.append(f"Preferences: {pref_text}")
-        if profile_parts:
-            parts.append("\n".join(profile_parts))
-
-        # 2. Project Status
-        if mem.current_project_status:
-            status_text = "\n".join(f"  - {k}: {v}" for k, v in mem.current_project_status.items())
-            parts.append(f"Current Project Status:\n{status_text}")
-
-        content = "\n\n".join(parts) if parts else "(No structured memory recorded yet. Use 'memory' skill to save preferences/facts.)"
-
-        return (
-            "\n\n"
-            "================================================================\n"
-            "📌 STRUCTURED MEMORY (Known Context)\n"
-            "================================================================\n"
-            + content
-            + "\n================================================================\n"
-        )
+    # NOTE: Header/Prompt formatting logic moved to skills/memory/lib/logic.py
+    # This keeps core/memory.py focused on pure IO and Session Persistence.
 
     def record_turn(self, session_key: str, user_message: str, ai_message: str, memory_params: Optional[dict] = None, usage: Optional[dict] = None) -> Generator[str, None, ThreadMemory]:
         """Saves a turn to history."""
