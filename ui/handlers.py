@@ -172,16 +172,7 @@ class UIHandler:
             # Memory save
             final_answer = chatbot_history[-1][1]
             
-            # 從 log_lines 萃取本回合呼叫過的工具，附加到 final_answer 讓大腦維持「執行過動作的記憶」
-            executed_tools = set()
-            for line in log_lines:
-                if "Calling Tool:" in line:
-                    tool_name = line.split("Calling Tool:")[-1].strip()
-                    executed_tools.add(tool_name)
-            
-            if executed_tools:
-                tools_str = ", ".join(executed_tools)
-                final_answer += f"\n\n[📝 系統附註 (System Memory): 於此回覆中，AI 已成功執行了工具: {tools_str}。若設定已生效，後續無需重複呼叫。]"
+
 
             try:
                 # 更新長期記憶

@@ -142,18 +142,18 @@ Choose colors that match your topic — don't default to generic blue. Use these
 - 0.3-0.5" between content blocks
 - Leave breathing room—don't fill every inch
 
-### Avoid (Common Mistakes)
+### Design Best Practices
 
-- **Don't repeat the same layout** — vary columns, cards, and callouts across slides
-- **Don't center body text** — left-align paragraphs and lists; center only titles
-- **Don't skimp on size contrast** — titles need 36pt+ to stand out from 14-16pt body
-- **Don't default to blue** — pick colors that reflect the specific topic
-- **Don't mix spacing randomly** — choose 0.3" or 0.5" gaps and use consistently
-- **Don't style one slide and leave the rest plain** — commit fully or keep it simple throughout
-- **Don't create text-only slides** — add images, icons, charts, or visual elements; avoid plain title + bullets
-- **Don't forget text box padding** — when aligning lines or shapes with text edges, set `margin: 0` on the text box or offset the shape to account for padding
-- **Don't use low-contrast elements** — icons AND text need strong contrast against the background; avoid light text on light backgrounds or dark text on dark backgrounds
-- **NEVER use accent lines under titles** — these are a hallmark of AI-generated slides; use whitespace or background color instead
+- **Vary slide layouts** — change up columns, cards, and callouts between slides to maintain engagement.
+- **Left-align body text** — maintain left alignment for paragraphs and lists, reserving centering for titles only.
+- **Ensure strong size contrast** — use 36pt+ for titles to clearly distinguish them from 14-16pt body text.
+- **Select theme-appropriate colors** — choose color palettes that reflect the specific topic instead of defaulting to blue.
+- **Standardize spacing** — apply consistent 0.3" or 0.5" gaps throughout the presentation.
+- **Maintain consistent styling** — apply your design theme uniformly across all slides for a cohesive look.
+- **Include visual elements** — enrich every slide with images, icons, charts, or other graphics to support the text.
+- **Manage text box padding** — when aligning elements with text edges, adjust margins or offsets to account for default padding.
+- **Maximize visual contrast** — ensure high contrast between text/icons and their background for optimal readability.
+- **Use whitespace for separation** — separate titles using whitespace or background colors, avoiding the use of accent lines.
 
 ---
 

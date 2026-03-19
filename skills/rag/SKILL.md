@@ -1,15 +1,46 @@
 ---
 name: rag
-description: Mandatory tool for LONG-TERM EXTERNAL MEMORY (Knowledge, Project Plans, Business Documents, Client Data). Use this to search product docs AND to actively remember/record any long-form user facts into Qdrant (`upsert_to_vdb.py`).
+description: Access Product and Technical Knowledge. Use this to lookup 'product equipment information' (GPUs, servers) or 'technical industry regulations/specifications'.
 ---
 
-# RAG (Retrieval-Augmented Generation) Skill
+## RAG 角色定位 (Role & Responsibility)
 
-This skill allows you to retrieve documents from the internal Knowledge Base (Vector Database) maintained within this project. The knowledge base contains information about Leadtek's GPU products, systems, workstations, and company documents.
+本工具專注於 **「外部技術知識」** 與 **「產品/產業規範」**。
 
-## Available Scripts
+1. **產品設備資訊 (Product Equipment Info)**
+   - 包含：GPU 規格、工作站配置、零件相容性、Roadmap。
+   - 來源：Leadtek 內部產品文件。
 
-The scripts are located in `skills/rag/scripts/`.
+2. **產業/技術規範 (Technical Specifications/Regulations)**
+   - 包含：技術標準、合規文件、硬體連線規範。
+
+---
+
+## 常用 Collection 與查詢情境
+
+### 1. 產品規格查詢
+- `hw_gpu_kb`: Leadtek 單張顯卡、規格、Roadmap。
+- `hw_system_kb`: Leadtek 工作站與伺服器、相容性。
+
+### 2. FAQ 與通用技術文件
+- `test_docs`: AIDMS 產品介紹、常見問題。
+
+---
+
+## 最佳實踐
+
+**情境 A：詢問特定硬體型號規格**
+User: 「Leadtek RTX A6000 的耗電量是多少？」
+Action: 呼叫 `search_vdb.py` 查詢 `hw_gpu_kb`。
+
+**情境 B：尋找產業技術規範**
+User: 「請確認這款顯卡是否符合伺服器插槽規範？」
+Action: 使用 `retrieve_context.py` 從 RAG 提取規格。
+
+**用法示範：**
+```bash
+python skills/rag/scripts/upsert_to_vdb.py "專案 A 的權限設計邏輯為..." -c agent_long_memory -s conversation --metadata '{"type": "knowledge", "importance": 4}'
+```
 
 ### 1. `search_vdb.py`
 
@@ -48,9 +79,9 @@ This script behaves similarly to `search_vdb.py`, but its output is formatted op
 python skills/rag/scripts/retrieve_context.py "query" [--max_tokens MAX] [-c COLLECTION_NAME]
 ```
 
-### 3. `upsert_to_vdb.py` (動態寫入 / 長期記憶)
+### 3. `upsert_to_vdb.py` (動態寫入 / 技術知識庫)
 
-這是實現 **2026 年長短期記憶分離架構** 的核心工具。請將大型事實、對話摘要、專案文件存入 Qdrant。
+這是維護 **技術與產品知識庫** 的工具。請將產品手冊、技術規格、產業規範存入 Qdrant。
 
 **推薦 Collection 名稱：** `agent_long_memory`
 
