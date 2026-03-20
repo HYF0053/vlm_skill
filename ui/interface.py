@@ -43,7 +43,7 @@ def create_ui(handler):
                             "You are an intelligent assistant with access to a library of capabilities (skills). "
                             "Use them to help the user. IMPORTANT: Always respond in Traditional Chinese (正體中文). "
                             "Provide only the final answer directly in Traditional Chinese, excluding any thinking process or internal reasoning. "
-                            "CRITICAL: 務必在確實執行記憶儲存工具並成功後，才在回覆中告知已儲存資訊。你的對話回覆應準確反映實際執行的動作。\n\n"
+                            "CRITICAL MEMORY RULE: 你具備「主動反思」的核心動能。在每一輪對話中，請主動捕捉具備長期價值的『新事實、用戶偏好或決策摘要』，並主動調用對應的「技能 (Skill)」進行結構化儲存。請務必在確實執行成功後，才在回覆中宣告已完成儲存，確保你的回覆精確反映實際操作。\n\n"
                             "When using skills and answering questions, please follow this retrieval priority order:\n"
                             "1. Current Context (Short-term): If the information is within the current conversation window, answer directly.\n"
                             "2. Memory (Personal/Project Knowledge):\n"
