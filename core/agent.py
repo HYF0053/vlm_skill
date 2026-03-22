@@ -195,9 +195,15 @@ def run_agent_stream(agent, inputs, config, log_lines, tool_registry, chatbot_hi
                         
                         yield chatbot_history, "\n\n".join(log_lines), final_system_prompt, usage_html
 
+                        # Preemptive token limit check (90% threshold) to avoid hard provider errors
+                        if usage["total"] >= max_tokens * 0.90:
+                            raise Exception("Preemptive Token Limit")
+
                     elif msg_type == "tool":
                         _flush_streaming_buffer()
                         content = getattr(msg, "content", "") or ""
+                        if len(content) > 3000:
+                            content = content[:1500] + "\n...[TRUNCATED_DUE_TO_LENGTH]...\n" + content[-1500:]
                         log_lines.append(f"✅ Tool Output ({getattr(msg, 'name', 'tool')}):\n{content}")
                         
                         usage["tool_results"] += get_token_estimate(len(content), cpt)
@@ -206,21 +212,32 @@ def run_agent_stream(agent, inputs, config, log_lines, tool_registry, chatbot_hi
                         
                         yield chatbot_history, "\n\n".join(log_lines), final_system_prompt, usage_html
 
+                        if usage["total"] >= max_tokens * 0.90:
+                            raise Exception("Preemptive Token Limit")
+
     except Exception as e:
         _flush_streaming_buffer()
-        err = str(e)
-        is_recursion = "recursion" in err.lower()
-        msg = "⚠️ Agent exceeded max steps." if is_recursion else f"❌ Error: {err}"
+        err = str(e).lower()
+        is_recursion = "recursion" in err
+        is_token_limit = any(k in err for k in ["preemptive token limit", "context length", "token limit", "maximum context length", "context_length_exceeded", "max_tokens"])
+        
+        if is_recursion:
+            msg = "⚠️ Agent exceeded max steps."
+        elif is_token_limit:
+            msg = "⚠️ Agent approaching or exceeded token limit."
+        else:
+            msg = f"❌ Error: {str(e)}"
+            
         log_lines.append(msg)
         
-        if is_recursion and llm:
+        if (is_recursion or is_token_limit) and llm:
             log_lines.append("🤖 Generating progress summary...")
             yield chatbot_history, "\n\n".join(log_lines), final_system_prompt, generate_usage_html(usage, max_tokens)
             
-            logs_text = "\n".join(log_lines[-20:])
+            logs_text = "\n".join([str(l)[:1500] for l in log_lines[-20:]])
             summary_prompt = (
-                "您是一個任務總結助手。AI Agent 在執行任務時達到了最大步數限制，目前被迫停止。\n"
-                "請根據以下的執行日誌（Logs），總結目前的進度、已經完成的事項、尚未完成的部分，並詢問用戶是否需要繼續（增加步數）或就此結束。\n\n"
+                "您是一個任務總結助手。AI Agent 在執行任務時達到了最大步數或 Token 限制，目前被迫停止。\n"
+                "請根據以下的執行日誌（Logs），總結目前的進度、已經完成的事項、尚未完成的部分，並詢問用戶是否需要繼續（增加步數/清除部分記憶）或就此結束。\n\n"
                 "執行日誌：\n"
                 f"{logs_text}\n\n"
                 "請務必使用 正體中文 (Traditional Chinese) 回答，並直接提供摘要（包含當前進度、成果、待辦事項及詢問用戶意向），不要包含任何開場白。"
@@ -229,9 +246,9 @@ def run_agent_stream(agent, inputs, config, log_lines, tool_registry, chatbot_hi
                 summary_res = llm.invoke(summary_prompt)
                 current_output = summary_res.content
             except Exception as sum_err:
-                current_output = f"⚠️ 達到步數限制，且摘要生成失敗: {sum_err}"
+                current_output = f"⚠️ 達到步數或 Token 限制，且摘要生成失敗: {sum_err}"
         else:
-            current_output = current_output or err
+            current_output = current_output or str(e)
 
         chatbot_history[-1][1] = current_output
         usage_html = generate_usage_html(usage, max_tokens)
