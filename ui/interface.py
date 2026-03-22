@@ -69,6 +69,12 @@ def create_ui(handler):
 
                 with gr.Accordion("📜 Execution Logs & Technical Details", open=True):
                     log_output = gr.Textbox(label="Thinking Process & Logs", lines=10, max_lines=15, interactive=False)
+                    with gr.Group():
+                        gr.Markdown("#### ⚡ Live Command Output (Updates every 2s)")
+                        live_log_view = gr.Code(label="Real-time Tool Output", language="markdown", lines=5, interactive=False)
+                        refresh_timer = gr.Timer(value=2, active=True)
+                        refresh_timer.tick(handler.get_live_logs, outputs=live_log_view)
+                    
                     injected_prompt_output = gr.Textbox(label="Actual Injected System Prompt (ReadOnly)", lines=12, interactive=False)
 
             # --- TAB 2: Settings ---

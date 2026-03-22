@@ -12,6 +12,19 @@ class UIHandler:
         self.tool_registry = tool_registry
         self.global_checkpointer = global_checkpointer
 
+    def get_live_logs(self):
+        """Reads the live log file for real-time tool output display."""
+        log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "logs", "live.log")
+        if not os.path.exists(log_path):
+            return "No active tool execution logs found."
+        try:
+            with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                # Return last 50 lines to keep it readable
+                lines = f.readlines()
+                return "".join(lines[-50:])
+        except Exception as e:
+            return f"Error reading logs: {e}"
+
     def refresh_models(self, provider, api_url):
         if not api_url: return gr.Dropdown(choices=[])
         models = get_ollama_models(api_url) if provider == "Ollama" else get_vllm_models(api_url)
@@ -108,11 +121,53 @@ class UIHandler:
                 input_history = 0
                 formatted_history = []
                 if hasattr(mem, "recent_messages") and mem.recent_messages:
+                    for m in mem.recent_messages:
+                        role = m.get("role", "user")
+                        content = m.get("content", "")
+                        
+                        # 如果該輪有附件（如圖片、文本或PDF），重新載入給模型看，確保「長時視覺」不中斷
+                        attachments = m.get("attachments", [])
+                        if attachments:
+                            msg_list = [{"type": "text", "text": content}]
+                            for att in attachments:
+                                att_path = att.get("path", "")
+                                if not os.path.exists(att_path):
+                                    continue
+                                
+                                att_type = att.get("type")
+                                if att_type == "image":
+                                    b64 = encode_image(att_path, int(image_max_size))
+                                    if b64:
+                                        msg_list.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
+                                elif att_type == "text_snippet":
+                                    try:
+                                        with open(att_path, "r", encoding="utf-8", errors="replace") as f:
+                                            snippet = f.read()
+                                        file_name = os.path.basename(att_path)
+                                        msg_list[0]["text"] += f"\n\n檔案 [{file_name}] 內容：\n```\n{snippet[:8000]}\n```"
+                                    except Exception:
+                                        pass
+                                elif att_type == "other":
+                                    file_name = os.path.basename(att_path)
+                                    msg_list[0]["text"] += f"\n\n請處理檔案：**{file_name}** (`{att_path}`)"
+                            formatted_history.append({"role": role, "content": msg_list})
+                        else:
+                            formatted_history.append({"role": role, "content": content})
+                    
                     actual_history_len = sum(len(str(m.get("content", ""))) for m in mem.recent_messages)
                     input_history = get_token_estimate(actual_history_len, cpt)
+                    
+                    # 加上歷史圖片與檔案的 Token 預估
                     for m in mem.recent_messages:
-                        formatted_history.append({"role": m.get("role", "user"), "content": m.get("content", "")})
-            except Exception:
+                        for att in m.get("attachments", []):
+                            if att.get("type") == "image":
+                                input_history += 1000
+                            elif att.get("type") == "text_snippet":
+                                input_history += 1000
+                            elif att.get("type") == "other":
+                                input_history += 50
+            except Exception as e:
+                print(f"[UIHandler] History formatting error: {e}")
                 input_history = 0
             
             usage = {
@@ -134,20 +189,24 @@ class UIHandler:
             # Agent preparation (SkillMiddleware will handle the system prompt injection in LangGraph)
             agent, llm = create_dynamic_agent(provider, api_url, model_name, self.global_checkpointer, [mw], system_prompt, tools_list)
             message_content = [{"type": "text", "text": query}]
+            current_attachments = []
             if file_upload:
                 if file_type == 'image':
                     b64 = encode_image(file_upload, int(image_max_size))
                     if b64: 
                         message_content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
                         usage["input_context"] += 1000 
+                        current_attachments.append({"type": "image", "path": file_upload})
                 elif file_type == 'text':
                     with open(file_upload, "r", encoding="utf-8", errors="replace") as f:
                         content = f.read()
                     text_blob = f"\n\n檔案 [{file_name}] 內容：\n```\n{content[:8000]}\n```"
                     message_content[0]["text"] += text_blob
                     usage["input_context"] += get_token_estimate(len(text_blob), cpt)
+                    current_attachments.append({"type": "text_snippet", "path": file_upload})
                 else:
                     message_content[0]["text"] += f"\n\n請處理檔案：**{file_name}** (`{file_upload}`)"
+                    current_attachments.append({"type": "other", "path": file_upload})
 
             usage["total"] = sum(v for k, v in usage.items() if k != "total")
             usage_html = generate_usage_html(usage, memory_params["max_model_len"] if memory_params else 4096)
@@ -177,7 +236,7 @@ class UIHandler:
             try:
                 # 更新長期記憶
                 updated_mem = None
-                gen_mem = self.memory_store.record_turn(session_key, query, final_answer, memory_params=memory_params, usage=usage)
+                gen_mem = self.memory_store.record_turn(session_key, query, final_answer, attachments=current_attachments, usage=usage)
                 
                 try:
                     while True:

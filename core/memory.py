@@ -107,13 +107,17 @@ class MemoryStore:
     # NOTE: Header/Prompt formatting logic moved to skills/memory/lib/logic.py
     # This keeps core/memory.py focused on pure IO and Session Persistence.
 
-    def record_turn(self, session_key: str, user_message: str, ai_message: str, memory_params: Optional[dict] = None, usage: Optional[dict] = None) -> Generator[str, None, ThreadMemory]:
+    def record_turn(self, session_key: str, user_message: str, ai_message: str, attachments: Optional[list[dict]] = None, usage: Optional[dict] = None) -> Generator[str, None, ThreadMemory]:
         """Saves a turn to history."""
         with self._lock_session(session_key) as mem:
             mem.turn_count += 1
             
             # Keep history manageable in the JSON
-            mem.recent_messages.append({"role": "user", "content": user_message[:2000], "ts": datetime.now(timezone.utc).isoformat()})
+            user_entry = {"role": "user", "content": user_message[:2000], "ts": datetime.now(timezone.utc).isoformat()}
+            if attachments:
+                user_entry["attachments"] = attachments
+                
+            mem.recent_messages.append(user_entry)
             mem.recent_messages.append({"role": "assistant", "content": ai_message[:2000], "ts": datetime.now(timezone.utc).isoformat()})
             
             # Smart Trimming: First 2 messages (anchor) + latest rolling messages

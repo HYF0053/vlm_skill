@@ -117,46 +117,102 @@ def _create_tools_for_repo(repo: SkillRepository):
         """Read a specific file from a skill's directory."""
         return repo.get_skill_details(skill_name, file_path)
 
+    def _run_process_realtime(cmd, cwd, env):
+        """Helper to run a subprocess with real-time terminal output and buffered capture."""
+        full_output = []
+        # Support for UI real-time display via a shared log file
+        log_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data", "logs"))
+        os.makedirs(log_dir, exist_ok=True)
+        live_log_path = os.path.join(log_dir, "live.log")
+        
+        try:
+            msg = f"\n[⚡ Real-time Execution] { ' '.join(cmd) if isinstance(cmd, list) else cmd }"
+            print(msg, flush=True)
+            print("-" * 60, flush=True)
+            
+            # Start fresh log for this command
+            with open(live_log_path, "w", encoding="utf-8") as f:
+                f.write(f"{msg}\n" + "-"*60 + "\n")
+
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                shell=isinstance(cmd, str),
+                cwd=cwd,
+                env=env,
+                encoding="utf-8",
+                errors="replace",
+                text=True,
+                bufsize=1
+            )
+
+            # Read line by line from the pipe
+            while True:
+                line = process.stdout.readline()
+                if not line and process.poll() is not None:
+                    break
+                if line:
+                    # 1. Print to terminal
+                    print(line, end="", flush=True)
+                    # 2. Append to capturing buffer
+                    full_output.append(line)
+                    # 3. Append to live log for UI polling
+                    try:
+                        with open(live_log_path, "a", encoding="utf-8") as f:
+                            f.write(line)
+                    except Exception: pass
+            
+            print("-" * 60, flush=True)
+            return "".join(full_output), process.poll()
+        except Exception as e:
+            err_msg = f"Process failure: {e}"
+            with open(live_log_path, "a", encoding="utf-8") as f: f.write(f"\n❌ {err_msg}")
+            return err_msg, -1
+
     @tool
     def execute_script(skill_name: str, script_path: str, script_args: str = "") -> str:
-        """Execute a Python script located inside a skill's directory."""
+        """Execute a Python script inside a skill's directory with real-time feedback (Check terminal or Live Log)."""
         skill = repo._find_skill_by_name(skill_name)
         if not skill: return "Skill not found."
         abs_script = os.path.normpath(os.path.join(skill.path, script_path))
         if not abs_script.startswith(os.path.abspath(skill.path)) or not os.path.isfile(abs_script):
             return "Invalid script path."
         
-        cmd = [sys.executable, abs_script] + shlex.split(script_args)
+        # Use -u for unbuffered python output
+        cmd = [sys.executable, "-u", abs_script] + shlex.split(script_args)
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
-        try:
-            result = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace", timeout=600, cwd=skill.path, env=env)
-            return f"[stdout]\n{result.stdout}\n[stderr]\n{result.stderr}\n[exit code] {result.returncode}"
-        except Exception as e: return f"Error: {e}"
+        env["PYTHONUNBUFFERED"] = "1"
+        
+        output, code = _run_process_realtime(cmd, skill.path, env)
+        return f"[stdout/stderr]\n{output}\n[exit code] {code}"
 
     @tool
     def run_cli_command(command: str, working_directory: str = "") -> str:
-        """Execute an arbitrary CLI / shell command on the host system."""
+        """Execute a CLI command with real-time terminal feedback."""
         cwd = working_directory or os.getcwd()
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
-        try:
-            result = subprocess.run(command, shell=True, capture_output=True, encoding="utf-8", errors="replace", timeout=600, cwd=cwd, env=env)
-            return f"[stdout]\n{result.stdout}\n[stderr]\n{result.stderr}\n[exit code] {result.returncode}"
-        except Exception as e: return f"Error: {e}"
+        env["PYTHONUNBUFFERED"] = "1"
+        
+        output, code = _run_process_realtime(command, cwd, env)
+        return f"[stdout/stderr]\n{output}\n[exit code] {code}"
 
     @tool
     def run_python_code(code: str, working_directory: str = "") -> str:
-        """Write a Python code string to a temporary file and execute it."""
+        """Execute Python code with real-time feedback via temporary file."""
         import tempfile
         cwd = working_directory or os.getcwd()
         tmp_path = os.path.join(tempfile.gettempdir(), f"tmp_{uuid.uuid4().hex}.py")
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
+        env["PYTHONUNBUFFERED"] = "1"
         try:
             with open(tmp_path, "w", encoding="utf-8") as f: f.write(code)
-            result = subprocess.run([sys.executable, tmp_path], capture_output=True, encoding="utf-8", errors="replace", timeout=600, cwd=cwd, env=env)
-            return f"[stdout]\n{result.stdout}\n[stderr]\n{result.stderr}\n[exit code] {result.returncode}"
+            cmd = [sys.executable, "-u", tmp_path]
+            output, exit_code = _run_process_realtime(cmd, cwd, env)
+            return f"[stdout/stderr]\n{output}\n[exit code] {exit_code}"
         except Exception as e: return f"Error: {e}"
         finally:
             if os.path.exists(tmp_path): os.remove(tmp_path)
