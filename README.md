@@ -52,10 +52,34 @@ Agent 可以動態載入並學習新的技能。包含：
 
 ## 🛠️ 如何使用 (Getting Started)
 
-1. **環境配置**:
-   安裝基礎套件 (可能需根據技能個別補充):
+您可以選擇推薦的 **Docker 容器化環境** 來徹底避免套件衝突，或使用原本的**本地端環境**。
+
+### 🐳 方式一：Docker 容器執行 (推薦)
+
+透過專案提供的 `Dockerfile`，只需兩個指令即可在隔離環境中啟動，並將本地腳本掛載同步：
+
+1. **建置 Docker 映像檔**:
    ```bash
-   pip install gradio langchain langchain-openai langgraph pillow requests pyyaml
+   docker build -t vlm-env .
+   ```
+
+2. **啟動容器並掛載資料夾 (Volume Mount)**:
+   建議將當前專案目錄掛載到容器內的 `/app`，並映射 Gradio (`7860`) 與外部服務 (`63574`) 的連接埠：
+   ```bash
+   # Windows PowerShell 寫法 (${PWD}):
+   docker run -it --rm -p 7860:7860 -p 63574:63574 -v ${PWD}:/app --gpus all vlm-env
+   
+   # Linux/macOS 寫法 ($(pwd)):
+   # docker run -it --rm -p 7860:7860 -p 63574:63574 -v $(pwd):/app --gpus all vlm-env
+   ```
+   *注意：加上 `--gpus all` 可讓容器內的 Ultralytics 等套件順利調用宿主機的 NVIDIA GPU 進行自動訓練與預測。預設啟動會自動執行 `python app.py`。*
+
+### 💻 方式二：本地端執行 (Local Execution)
+
+1. **環境配置**:
+   安裝基礎套件 (建議使用虛擬環境):
+   ```bash
+   pip install -r requirements.txt
    ```
 
 2. **初始化向量庫 (選擇性)**:
