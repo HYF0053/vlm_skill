@@ -10,9 +10,23 @@ import os
 import sys
 
 
+# 取得專案根目錄：優先讀 app.py 設置的環境變數，fallback 用 __file__ 推算
+PROJECT_ROOT = os.environ.get("PROJECT_ROOT") or os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+)
+DEFAULT_TMP = os.path.join(PROJECT_ROOT, "tmp")
+
+
+def resolve_path(path: str) -> str:
+    """若 path 為相對路徑，以 PROJECT_ROOT 為基準轉為絕對路徑。"""
+    if os.path.isabs(path):
+        return path
+    return os.path.join(PROJECT_ROOT, path)
+
+
 def download_youtube_to_mp3(
     url: str,
-    output_dir: str = "/tmp",
+    output_dir: str = DEFAULT_TMP,
     filename: str = None,
 ) -> str:
     """
@@ -20,7 +34,7 @@ def download_youtube_to_mp3(
 
     Args:
         url: YouTube 影片網址
-        output_dir: 輸出目錄（預設 /tmp）
+        output_dir: 輸出目錄（預設為專案根目錄下的 tmp）
         filename: 輸出檔案名稱（不含副檔名），None 時使用影片標題
 
     Returns:
@@ -93,8 +107,8 @@ def main():
     )
     parser.add_argument(
         "--output_dir",
-        default="/tmp",
-        help="輸出目錄（預設 /tmp）",
+        default=DEFAULT_TMP,
+        help=f"輸出目錄 (預設: {DEFAULT_TMP})",
     )
     parser.add_argument(
         "--filename",
@@ -107,7 +121,7 @@ def main():
     try:
         mp3_path = download_youtube_to_mp3(
             url=args.url,
-            output_dir=args.output_dir,
+            output_dir=resolve_path(args.output_dir),
             filename=args.filename,
         )
         print(mp3_path)

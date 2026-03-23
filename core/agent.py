@@ -30,7 +30,8 @@ def create_dynamic_agent(provider: str, api_url: str, model_name: str, checkpoin
             "   - Use `Memory Skill` (search_memo_qdrant.py) for past agent workflows and project memory.\n"
             "   - Use `RAG Skill` (search_vdb.py) for searching the user's external documents databases.\n"
             "3. MCP Servers (Real-time/External Data): When needing to read external services (e.g., GitHub, Slack) or perform specific actions.\n"
-            "4. Web Search (External Online Knowledge): When internal memory has no results or the question involves general latest external technical knowledge."
+            "4. Web Search (External Online Knowledge): When internal memory has no results or the question involves general latest external technical knowledge.\n\n"
+            "CRITICAL FILE PATH RULE: ANY files, results, or artifacts you generate or that scripts output MUST be saved in the `./results` directory. ANY temporary files MUST be saved in the `./tmp` directory. Avoid saving files casually in other locations."
         )
 
     # 如果有提供 tools 列表，則傳遞給 create_agent

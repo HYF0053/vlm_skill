@@ -1,0 +1,32 @@
+{
+  "session_key": "session1",
+  "display_name": "",
+  "created_at": "2026-03-23T14:01:25.897633+00:00",
+  "last_updated_at": "2026-03-23T14:02:35.126504+00:00",
+  "turn_count": 1,
+  "user_profile": {},
+  "preferences": {},
+  "agent_rules": {},
+  "recent_messages": [
+    {
+      "role": "user",
+      "content": "我想知道RAG vs Long Context 比較研究 先前紀錄中應該有紀錄",
+      "ts": "2026-03-23T14:02:35.120147+00:00"
+    },
+    {
+      "role": "assistant",
+      "content": "</think>\n\n找到了！先前紀錄中確實有關於 **RAG vs Long Context 比較研究** 的重要成果，以下是完整內容：\n\n---\n\n## 📊 RAG vs Long Context 比較研究\n\n### 🔵 Long Context 優勢\n1. **基礎設施簡化** - 移除向量資料庫、嵌入模型、檢索邏輯\n2. **避免檢索失敗** - 無靜默失敗問題\n3. **全書問題** - 可發現缺失內容\n\n### 🟢 RAG 優勢\n1. **計算效率** - 索引一次，查詢時只處理相關片段\n2. **避免大海撈針** - 減少注意力稀釋\n3. **無限數據集** - 適合 TB/PB 級企業數據湖\n\n### ✅ 結論\n- **有界數據集 + 複雜全局推理** → 使用 **Long Context**\n- **無限企業知識庫** → 使用 **RAG**\n- 兩者各有適用場景，可結合使用\n\n---\n\n這項研究的重要性分數為 **9.0**，屬於高價值結論。需要我進一步說明任何細節嗎？",
+      "ts": "2026-03-23T14:02:35.120158+00:00"
+    }
+  ],
+  "tags": [],
+  "meta": {},
+  "usage": {
+    "input_prompt": 21,
+    "input_context": 4270,
+    "input_history": 0,
+    "output": 251,
+    "tool_results": 2022,
+    "total": 6564
+  }
+}
