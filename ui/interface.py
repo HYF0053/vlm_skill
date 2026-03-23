@@ -88,6 +88,9 @@ def create_ui(handler):
                     with gr.Column():
                         image_max_size_slider = gr.Slider(512, 4096, value=1024, step=512, label="Max Image Dimension")
                         max_agent_steps_slider = gr.Slider(5, 50, value=15, step=1, label="Max Agent Steps")
+                        asr_url_input = gr.Textbox(label="🎙️ ASR API URL", value="http://localhost:8000", placeholder="http://<host>:<port>")
+                        refresh_asr_models_btn = gr.Button("🔄 Refresh ASR Models")
+                        asr_model_dropdown = gr.Dropdown(label="🎙️ ASR Model (現在可用模型)", choices=[], interactive=True, allow_custom_value=True)
 
             # --- TAB 3: Memory Manager ---
             with gr.Tab("🧠 Memory Manager"):
@@ -126,22 +129,25 @@ def create_ui(handler):
         # apply_preset_btn.click(apply_preset, inputs=[session_key_preset], outputs=[session_key_input])
         
         refresh_models_btn.click(handler.refresh_models, inputs=[provider_radio, api_url_input], outputs=[model_dropdown])
+        refresh_asr_models_btn.click(handler.refresh_asr_models, inputs=[asr_url_input], outputs=[asr_model_dropdown])
         
         # Skill Editor refresh
         refresh_skills_btn.click(handler.refresh_skills_list, outputs=[skill_list])
         
         # --- Execution Logic ---
         execution_inputs = [
-            file_upload_input, 
-            provider_radio, 
-            api_url_input, 
-            model_dropdown, 
-            image_max_size_slider, 
-            max_agent_steps_slider, 
-            system_prompt_input, 
-            user_prompt_input, 
-            chatbot, 
-            session_dropdown
+            file_upload_input,
+            provider_radio,
+            api_url_input,
+            model_dropdown,
+            image_max_size_slider,
+            max_agent_steps_slider,
+            system_prompt_input,
+            user_prompt_input,
+            chatbot,
+            session_dropdown,
+            asr_url_input,
+            asr_model_dropdown,
         ]
         execution_outputs = [chatbot, log_output, injected_prompt_output, visual_usage_status, file_upload_input, user_prompt_input]
 

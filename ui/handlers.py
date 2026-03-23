@@ -33,7 +33,17 @@ class UIHandler:
             return gr.Dropdown(choices=[], value=None)
         return gr.Dropdown(choices=models, value=models[0])
 
-    def run_agent_task(self, file_upload, provider, api_url, model_name, image_max_size, max_agent_steps, system_prompt, user_prompt, chatbot_history, session_key):
+    def refresh_asr_models(self, asr_url):
+        """從 ASR API 取得可用模型列表。"""
+        if not asr_url:
+            return gr.Dropdown(choices=[])
+        models = get_vllm_models(asr_url)
+        if not models:
+            gr.Info(f"No ASR models found at {asr_url}")
+            return gr.Dropdown(choices=[], value=None)
+        return gr.Dropdown(choices=models, value=models[0])
+
+    def run_agent_task(self, file_upload, provider, api_url, model_name, image_max_size, max_agent_steps, system_prompt, user_prompt, chatbot_history, session_key, asr_url=None, asr_model=None):
         session_key = str(session_key)
         print(f"[UIHandler] Running task for session: {session_key}, query: {user_prompt[:50]}...")
         from utils.helpers import get_model_context_len
@@ -51,7 +61,12 @@ class UIHandler:
 
             file_type = classify_uploaded_file(file_upload)
             file_name = os.path.basename(file_upload) if file_upload else ""
-            user_display = f"{'🖼️' if file_type=='image' else '📄'} [{file_name}]\n\n{query}" if file_upload else query
+            if file_type == 'image':
+                user_display = f"🖼️ [{file_name}]\n\n{query}" if file_upload else query
+            elif file_type == 'audio':
+                user_display = f"🎙️ [{file_name}]\n\n{query}" if file_upload else query
+            else:
+                user_display = f"📄 [{file_name}]\n\n{query}" if file_upload else query
 
             # Memory & Context Config
             ctx_len = get_model_context_len(provider, api_url, model_name)
@@ -185,6 +200,10 @@ class UIHandler:
             os.environ["VLLM_MODEL"]    = model_name
             os.environ["VLLM_API_KEY"]  = "ollama" if provider == "Ollama" else "EMPTY"
             os.environ["SESSION_ID"]    = session_key
+            if asr_url:
+                os.environ["ASR_API_URL"] = asr_url.rstrip("/")
+            if asr_model:
+                os.environ["ASR_MODEL"] = asr_model
 
             # Agent preparation (SkillMiddleware will handle the system prompt injection in LangGraph)
             agent, llm = create_dynamic_agent(provider, api_url, model_name, self.global_checkpointer, [mw], system_prompt, tools_list)
@@ -204,6 +223,17 @@ class UIHandler:
                     message_content[0]["text"] += text_blob
                     usage["input_context"] += get_token_estimate(len(text_blob), cpt)
                     current_attachments.append({"type": "text_snippet", "path": file_upload})
+                elif file_type == 'audio':
+                    _asr_url_hint = asr_url or os.environ.get('ASR_API_URL', 'http://localhost:8000')
+                    _asr_model_hint = asr_model or os.environ.get('ASR_MODEL', '')
+                    model_arg = f"--model {_asr_model_hint}" if _asr_model_hint else ""
+                    message_content[0]["text"] += (
+                        f"\n\n用戶上傳了音頻檔案：**{file_name}** (`{file_upload}`)\n"
+                        f"請使用 ASR skill 進行語音轉文字，執行指令範例：\n"
+                        f"`python skills/asr/scripts/transcribe.py --audio_path {file_upload} --asr_url {_asr_url_hint} {model_arg}`\n"
+                        f"（也可透過 execute_script 呼叫，skill_name=asr, script_path=scripts/transcribe.py）"
+                    )
+                    current_attachments.append({"type": "other", "path": file_upload})
                 else:
                     message_content[0]["text"] += f"\n\n請處理檔案：**{file_name}** (`{file_upload}`)"
                     current_attachments.append({"type": "other", "path": file_upload})
