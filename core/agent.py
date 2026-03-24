@@ -140,15 +140,6 @@ def run_agent_stream(agent, inputs, config, log_lines, tool_registry, chatbot_hi
                             usage["output"] = actual.get("completion_tokens", usage.get("output", 0))
                         
                         tool_calls = getattr(msg, "tool_calls", None) or []
-                        for tc in tool_calls:
-                            name, args = tc.get("name", ""), tc.get("args", {})
-                            sig = f"{name}::{repr(args)}"
-                            if sig == _last_tool_sig: _dup_count += 1
-                            else: _last_tool_sig, _dup_count = sig, 1
-                            if _dup_count >= MAX_DUP_CALLS:
-                                log_lines.append(f"⚠️ Repeated tool call {name} x{_dup_count}. Stopping.")
-                                return
-                            log_lines.append(f"🔧 Calling Tool: {name}")
 
                         if content:
                             # Filter out thinking process and keep only the final answer
@@ -176,6 +167,7 @@ def run_agent_stream(agent, inputs, config, log_lines, tool_registry, chatbot_hi
                                 filtered_content = '\n'.join(final_answer_lines).strip()
                             
                             if tool_calls:
+                                # 先記錄 AI 思考，再記錄工具呼叫
                                 log_lines.append(f"🤖 AI Thinking:\n{content}")
                             else:
                                 executed, remaining = try_execute_text_tool_calls(filtered_content, log_lines, tool_registry)
@@ -185,6 +177,34 @@ def run_agent_stream(agent, inputs, config, log_lines, tool_registry, chatbot_hi
                                     usage["output"] = get_token_estimate(len(current_output), cpt)
                                 elif remaining:
                                     log_lines.append(f"🤖 AI Thinking:\n{remaining}")
+
+                        for tc in tool_calls:
+                            name, args = tc.get("name", ""), tc.get("args", {})
+                            sig = f"{name}::{repr(args)}"
+                            if sig == _last_tool_sig: _dup_count += 1
+                            else: _last_tool_sig, _dup_count = sig, 1
+                            if _dup_count >= MAX_DUP_CALLS:
+                                log_lines.append(f"⚠️ Repeated tool call {name} x{_dup_count}. Stopping.")
+                                return
+                            # 顯示工具名稱及關鍵參數（尤其是 command/code/script_path）
+                            if name in ("run_cli_command", "run_python_code", "execute_script"):
+                                if name == "run_cli_command":
+                                    cmd_preview = args.get("command", "")
+                                    if len(cmd_preview) > 500:
+                                        cmd_preview = cmd_preview[:500] + "...[truncated]"
+                                    log_lines.append(f"🔧 Calling Tool: {name}\n$ {cmd_preview}")
+                                elif name == "run_python_code":
+                                    code_preview = args.get("code", "")
+                                    if len(code_preview) > 1000:
+                                        code_preview = code_preview[:1000] + "\n...[truncated]"
+                                    log_lines.append(f"🔧 Calling Tool: {name}\n```python\n{code_preview}\n```")
+                                elif name == "execute_script":
+                                    skill = args.get("skill_name", "")
+                                    script = args.get("script_path", "")
+                                    script_args = args.get("script_args", "")
+                                    log_lines.append(f"🔧 Calling Tool: {name}\nskill={skill}  script={script}  args={script_args}")
+                            else:
+                                log_lines.append(f"🔧 Calling Tool: {name}")
                         
                         usage["total"] = sum(v for k, v in usage.items() if k != "total")
                         usage_html = generate_usage_html(usage, max_tokens)
@@ -244,8 +264,15 @@ def run_agent_stream(agent, inputs, config, log_lines, tool_registry, chatbot_hi
                 "請務必使用 正體中文 (Traditional Chinese) 回答，並直接提供摘要（包含當前進度、成果、待辦事項及詢問用戶意向），不要包含任何開場白。"
             )
             try:
-                summary_res = llm.invoke(summary_prompt)
-                current_output = summary_res.content
+                # 使用 streaming 避免 generator 阻塞導致 Gradio 輸入框卡住
+                summary_buffer = ""
+                for chunk in llm.stream(summary_prompt):
+                    chunk_text = chunk.content if hasattr(chunk, "content") else str(chunk)
+                    if chunk_text:
+                        summary_buffer += chunk_text
+                        chatbot_history[-1][1] = summary_buffer
+                        yield chatbot_history, "\n\n".join(log_lines), final_system_prompt, generate_usage_html(usage, max_tokens)
+                current_output = summary_buffer
             except Exception as sum_err:
                 current_output = f"⚠️ 達到步數或 Token 限制，且摘要生成失敗: {sum_err}"
         else:
