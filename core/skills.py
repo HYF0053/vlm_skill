@@ -338,8 +338,10 @@ class SkillMiddleware(AgentMiddleware):
         )
         
         conflict_rule = (
-            "\n\n🚨 CRITICAL MEMORY RULE: The STRUCTURED MEMORY block above represents the ABSOLUTE TRUTH of the user's CURRENT status and preferences. "
-            "If past conversation history contradicts the Structured Memory (e.g. user changed their mind later), you MUST IGNORE the history and STRICTLY OBEY the Structured Memory. "
+            "\n\n🚨 CRITICAL MEMORY RULE: The STRUCTURED MEMORY block above represents the ABSOLUTE TRUTH of the user's CURRENT status and preferences.\n"
+            "   - IF you want to update something that looks like an existing label (Pref/Rule/Profile) above, YOU MUST USE THE EXACT SAME LABEL to overwrite it.\n"
+            "   - DO NOT create redundant labels (e.g. if 'brand_preference' exists, do not create 'memory_preference').\n"
+            "   - If past conversation history contradicts the Structured Memory, you MUST IGNORE the history and STRICTLY OBEY the Structured Memory. "
             "If a user's preference is ALREADY recorded or up-to-date in the Structured Memory, DO NOT call `upsert_memory` again for it."
         )
             
