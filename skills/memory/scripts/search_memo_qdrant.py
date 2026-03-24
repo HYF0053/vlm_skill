@@ -52,8 +52,8 @@ class MemoSearchService:
         doc_texts = []
         for d in docs_to_rank:
             payload = d.get("payload", {})
-            # For memo payloads, content might be 'content', 'workflow_summary', or fallback
-            content = payload.get("content", payload.get("workflow_summary", str(payload)))
+            # For memo payloads, content is in 'content' field
+            content = payload.get("content", str(payload))
             doc_texts.append(content[:4000]) # Truncate for safety
             
         payload = {
@@ -125,17 +125,14 @@ def main():
             
             print(f"\n[{i+1}] 📂 Collection: {collection} (Score: {score:.4f})")
             
-            # Print specific fields based on payload structure we designed
-            doc_type = payload.get("doc_type", payload.get("task_intent", "Unknown"))
-            print(f"    🏷️ Type/Intent: {doc_type}")
+            # Print specific fields based on payload structure
+            doc_type = payload.get("doc_type", "Unknown")
+            print(f"    🏷️ Type: {doc_type}")
             
             if "score" in payload:
-                print(f"    ⭐ Payload Score: {payload['score']}")
+                print(f"    ⭐ Importance: {payload['score']}")
                 
-            if "reflection" in payload and payload["reflection"]:
-                print(f"    🧠 Reflection: {payload['reflection']}")
-                
-            content = payload.get("content", payload.get("workflow_summary", "No content found"))
+            content = payload.get("content", "No content found")
             print(f"    📝 Content Snippet: {content[:1000]}")
             
             print("-" * 60)
