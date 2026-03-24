@@ -22,10 +22,13 @@ def create_dynamic_agent(provider: str, api_url: str, model_name: str, checkpoin
         system_prompt = (
             "You are an intelligent assistant with access to a library of capabilities (skills). "
             "Use them to help the user. "
-            "IMPORTANT: Always respond in Traditional Chinese (正體中文). "
-            "Provide the final answer directly in Traditional Chinese, excluding any thinking process, reasoning, or internal thoughts.\n\n"
+            "IMPORTANT: Always respond in Traditional Chinese (正體中文).\n\n"
+            "CRITICAL TOOL EXECUTION RULE:\n"
+            "- You MUST NOT pretend to have performed an action (e.g., 'I have saved your preference') unless you are providing the actual tool call in the same response.\n"
+            "- If you are saving a preference, rule, or fact, call the 'memory' or 'rag' skill script immediately. Do not just say you will do it.\n"
+            "- Verbal confirmation should only be given AFTER or ALONGSIDE the tool call markup.\n\n"
             "When using skills and answering questions, please follow this retrieval priority order:\n"
-            "1. Current Context (Short-term): Answer directly if the info is within the current conversation window (Note: The window only holds the last ~10 turns. Older details are dynamically trimmed).\n"
+            "1. Current Context (Short-term): Answer directly if the info is within the current conversation window.\n"
             "2. Agent Memory & User RAG (Long-term): If the context was trimmed or involves 'past decisions', 'project specs', or 'past workflows', you MUST search Long-term memory:\n"
             "   - Use `Memory Skill` (search_memo_qdrant.py) for past agent workflows and project memory.\n"
             "   - Use `RAG Skill` (search_vdb.py) for searching the user's external documents databases.\n"
@@ -142,8 +145,29 @@ def run_agent_stream(agent, inputs, config, log_lines, tool_registry, chatbot_hi
                         tool_calls = getattr(msg, "tool_calls", None) or []
 
                         if content:
-                            # Filter out thinking process and keep only the final answer
-                            filtered_content = content
+                            # 1. First, detect and execute tool calls from the ORIGINAL raw content
+                            tool_calls = getattr(msg, "tool_calls", None) or []
+                            
+                            if tool_calls:
+                                # Native tool calling (Function Calling)
+                                log_lines.append(f"🤖 AI Thinking:\n{content}")
+                                executed = True
+                                remaining = content # Display full content in logs if native tools are used
+                            else:
+                                # Text-based tool calling (<tool_call> tags)
+                                executed, remaining = try_execute_text_tool_calls(content, log_lines, tool_registry)
+                                if executed:
+                                    if remaining:
+                                        log_lines.append(f"🤖 AI Thinking (Remaining):\n{remaining}")
+                                else:
+                                    # No tools detected at all
+                                    pass
+
+                            # 2. Filter the "remaining" text for the chatbot final answer
+                            # This removes thinking process artifacts for a cleaner user experience
+                            lines = remaining.split('\n')
+                            final_answer_lines = []
+                            in_thinking = True
                             
                             thinking_patterns = [
                                 "太好了", "我找到了", "讓我", "根據", "從搜索結果", "我為您",
@@ -151,32 +175,27 @@ def run_agent_stream(agent, inputs, config, log_lines, tool_registry, chatbot_hi
                                 "好的", "我理解", "首先", "其次", "最後", "總結", "以下是"
                             ]
                             
-                            lines = content.split('\n')
-                            final_answer_lines = []
-                            in_thinking = True
-                            
                             for line in lines:
+                                # Start showing content after a separator or if it doesn't match patterns
                                 if in_thinking and (line.strip() == '' or line.strip().startswith('===') or line.strip().startswith('---')):
                                     in_thinking = False
+                                
                                 if not in_thinking:
                                     final_answer_lines.append(line)
                                 elif line.strip() and not any(line.strip().startswith(p) for p in thinking_patterns):
+                                    # If not in thinking mode yet, but line doesn't match patterns, it might be the start of the answer
                                     final_answer_lines.append(line)
                             
-                            if final_answer_lines:
-                                filtered_content = '\n'.join(final_answer_lines).strip()
-                            
-                            if tool_calls:
-                                # 先記錄 AI 思考，再記錄工具呼叫
-                                log_lines.append(f"🤖 AI Thinking:\n{content}")
+                            filtered_content = '\n'.join(final_answer_lines).strip()
+
+                            if not executed:
+                                # If no tools were run, this is likely the final result
+                                log_lines.append(f"🤖 Final Answer:\n{filtered_content}")
+                                current_output = filtered_content
+                                usage["output"] = get_token_estimate(len(current_output), cpt)
                             else:
-                                executed, remaining = try_execute_text_tool_calls(filtered_content, log_lines, tool_registry)
-                                if not executed:
-                                    log_lines.append(f"🤖 Final Answer:\n{filtered_content}")
-                                    current_output = filtered_content
-                                    usage["output"] = get_token_estimate(len(current_output), cpt)
-                                elif remaining:
-                                    log_lines.append(f"🤖 AI Thinking:\n{remaining}")
+                                # Tools were run, don't update current_output as final yet
+                                pass
 
                         for tc in tool_calls:
                             name, args = tc.get("name", ""), tc.get("args", {})
