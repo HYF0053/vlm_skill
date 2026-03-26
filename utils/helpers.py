@@ -14,6 +14,8 @@ TEXT_EXTENSIONS = {
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tiff", ".tif"}
 
+AUDIO_EXTENSIONS = {".mp3", ".wav", ".flac", ".m4a", ".ogg", ".webm", ".aac", ".opus"}
+
 def classify_uploaded_file(file_path: str) -> str:
     """判斷上傳檔案的類型: 'image' | 'text' | 'binary' | 'none'"""
     if not file_path:
@@ -21,6 +23,8 @@ def classify_uploaded_file(file_path: str) -> str:
     ext = os.path.splitext(file_path)[1].lower()
     if ext in IMAGE_EXTENSIONS:
         return 'image'
+    if ext in AUDIO_EXTENSIONS:
+        return 'audio'
     if ext in TEXT_EXTENSIONS:
         return 'text'
     return 'binary'

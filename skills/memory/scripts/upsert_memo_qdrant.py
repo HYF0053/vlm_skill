@@ -73,13 +73,11 @@ class MemoQdrantService:
 
 def main():
     parser = argparse.ArgumentParser(description="Upsert data to Long-term Memory Qdrant (memo.json)")
-    parser.add_argument("--collection", "-c", required=True, choices=["skill_workflow", "document_memory"], help="Target collection")
+    parser.add_argument("--collection", "-c", required=True, choices=["document_memory"], help="Target collection")
     parser.add_argument("--score", type=float, default=5.0, help="Confidence/Importance score (1-10 or 1-100)")
     parser.add_argument("--intent_or_type", "-i", type=str, required=True, help="Task intent (for workflow) or Document type (for document)")
     parser.add_argument("--content", "-t", type=str, required=True, help="Main workflow summary or document content")
-    parser.add_argument("--reflection", "-r", type=str, default="", help="Reflection or lesson learned (mainly for workflow)")
     parser.add_argument("--source", "-s", type=str, default="user_session", help="Source metadata")
-    parser.add_argument("--success", action="store_true", help="Mark workflow as successful (for skill_workflow)")
     
     args = parser.parse_args()
     
@@ -109,18 +107,11 @@ def main():
         
         text_to_embed = ""
         
-        if args.collection == "skill_workflow":
-            payload["task_intent"] = args.intent_or_type
-            payload["workflow_summary"] = args.content
-            payload["reflection"] = args.reflection
-            payload["success"] = args.success
-            # Embed intent + summary + reflection
-            text_to_embed = f"Intent: {args.intent_or_type}\nSummary: {args.content}\nReflection: {args.reflection}"
-        else: # document_memory
-            payload["doc_type"] = args.intent_or_type
-            payload["content"] = args.content
-            # Embed content
-            text_to_embed = f"[{args.intent_or_type}] {args.content}"
+        # document_memory
+        payload["doc_type"] = args.intent_or_type
+        payload["content"] = args.content
+        # Embed content
+        text_to_embed = f"[{args.intent_or_type}] {args.content}"
             
         print(f"Embedding text ({len(text_to_embed)} chars)...")
         vector = service.get_embedding(text_to_embed)

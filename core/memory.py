@@ -61,13 +61,48 @@ class MemoryStore:
 
     @contextmanager
     def _lock_session(self, session_key: str) -> Generator[ThreadMemory, None, None]:
-        """Provides a thread-safe context for loading, modifying, and saving memory."""
+        """Provides a cross-process and thread-safe context for loading, modifying, and saving memory."""
+        import time
         path = self._thread_path(session_key)
-        lock = FileLock.get(str(path))
-        with lock:
-            mem = self.load_thread(session_key)
-            yield mem
-            self.save_thread(mem)
+        lock_path = path.with_suffix(".lock")
+        
+        # 1. Thread-level lock (within same process)
+        thread_lock = FileLock.get(str(path))
+        
+        # 2. Cross-process file lock
+        # We use atomic directory creation or O_EXCL file creation for cross-process locking
+        # to avoid dependencies like portalocker/filelock.
+        with thread_lock:
+            start_time = time.time()
+            acquired = False
+            while time.time() - start_time < 10:  # 10s timeout
+                try:
+                    # O_EXCL is atomic on both Windows and Unix
+                    fd = os.open(lock_path, os.environ.get("OS_OPEN_FLAGS", os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+                    with os.fdopen(fd, 'w') as f:
+                        f.write(str(os.getpid()))
+                    acquired = True
+                    break
+                except FileExistsError:
+                    # Check for stale lock (older than 5 seconds)
+                    try:
+                        if time.time() - os.path.getmtime(lock_path) > 5:
+                            os.remove(lock_path)
+                    except Exception: pass
+                    time.sleep(0.05)
+            
+            if not acquired:
+                print(f"Warning: Could not acquire lock for {session_key} after 10s. Proceeding without lock (risk of race condition).")
+            
+            try:
+                mem = self.load_thread(session_key)
+                yield mem
+                self.save_thread(mem)
+            finally:
+                if acquired and lock_path.exists():
+                    try:
+                        os.remove(lock_path)
+                    except Exception: pass
 
     def load_thread(self, session_key: str) -> ThreadMemory:
         path = self._thread_path(session_key)

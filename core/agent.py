@@ -22,15 +22,19 @@ def create_dynamic_agent(provider: str, api_url: str, model_name: str, checkpoin
         system_prompt = (
             "You are an intelligent assistant with access to a library of capabilities (skills). "
             "Use them to help the user. "
-            "IMPORTANT: Always respond in Traditional Chinese (正體中文). "
-            "Provide the final answer directly in Traditional Chinese, excluding any thinking process, reasoning, or internal thoughts.\n\n"
+            "IMPORTANT: Always respond in Traditional Chinese (正體中文).\n\n"
+            "CRITICAL TOOL EXECUTION RULE:\n"
+            "- You MUST NOT pretend to have performed an action (e.g., 'I have saved your preference') unless you are providing the actual tool call in the same response.\n"
+            "- If you are saving a preference, rule, or fact, call the 'memory' or 'rag' skill script immediately. Do not just say you will do it.\n"
+            "- Verbal confirmation should only be given AFTER or ALONGSIDE the tool call markup.\n\n"
             "When using skills and answering questions, please follow this retrieval priority order:\n"
-            "1. Current Context (Short-term): Answer directly if the info is within the current conversation window (Note: The window only holds the last ~10 turns. Older details are dynamically trimmed).\n"
+            "1. Current Context (Short-term): Answer directly if the info is within the current conversation window.\n"
             "2. Agent Memory & User RAG (Long-term): If the context was trimmed or involves 'past decisions', 'project specs', or 'past workflows', you MUST search Long-term memory:\n"
             "   - Use `Memory Skill` (search_memo_qdrant.py) for past agent workflows and project memory.\n"
             "   - Use `RAG Skill` (search_vdb.py) for searching the user's external documents databases.\n"
             "3. MCP Servers (Real-time/External Data): When needing to read external services (e.g., GitHub, Slack) or perform specific actions.\n"
-            "4. Web Search (External Online Knowledge): When internal memory has no results or the question involves general latest external technical knowledge."
+            "4. Web Search (External Online Knowledge): When internal memory has no results or the question involves general latest external technical knowledge.\n\n"
+            "CRITICAL FILE PATH RULE: ANY files, results, or artifacts you generate or that scripts output MUST be saved in the `./results` directory. ANY temporary files MUST be saved in the `./tmp` directory. Avoid saving files casually in other locations."
         )
 
     # 如果有提供 tools 列表，則傳遞給 create_agent
@@ -139,6 +143,60 @@ def run_agent_stream(agent, inputs, config, log_lines, tool_registry, chatbot_hi
                             usage["output"] = actual.get("completion_tokens", usage.get("output", 0))
                         
                         tool_calls = getattr(msg, "tool_calls", None) or []
+
+                        if content:
+                            # 1. First, detect and execute tool calls from the ORIGINAL raw content
+                            tool_calls = getattr(msg, "tool_calls", None) or []
+                            
+                            if tool_calls:
+                                # Native tool calling (Function Calling)
+                                log_lines.append(f"🤖 AI Thinking:\n{content}")
+                                executed = True
+                                remaining = content # Display full content in logs if native tools are used
+                            else:
+                                # Text-based tool calling (<tool_call> tags)
+                                executed, remaining = try_execute_text_tool_calls(content, log_lines, tool_registry)
+                                if executed:
+                                    if remaining:
+                                        log_lines.append(f"🤖 AI Thinking (Remaining):\n{remaining}")
+                                else:
+                                    # No tools detected at all
+                                    pass
+
+                            # 2. Filter the "remaining" text for the chatbot final answer
+                            # This removes thinking process artifacts for a cleaner user experience
+                            lines = remaining.split('\n')
+                            final_answer_lines = []
+                            in_thinking = True
+                            
+                            thinking_patterns = [
+                                "太好了", "我找到了", "讓我", "根據", "從搜索結果", "我為您",
+                                "根據搜尋結果", "讓我把", "整理成", "以下", "我看到", "我來查詢",
+                                "好的", "我理解", "首先", "其次", "最後", "總結", "以下是"
+                            ]
+                            
+                            for line in lines:
+                                # Start showing content after a separator or if it doesn't match patterns
+                                if in_thinking and (line.strip() == '' or line.strip().startswith('===') or line.strip().startswith('---')):
+                                    in_thinking = False
+                                
+                                if not in_thinking:
+                                    final_answer_lines.append(line)
+                                elif line.strip() and not any(line.strip().startswith(p) for p in thinking_patterns):
+                                    # If not in thinking mode yet, but line doesn't match patterns, it might be the start of the answer
+                                    final_answer_lines.append(line)
+                            
+                            filtered_content = '\n'.join(final_answer_lines).strip()
+
+                            if not executed:
+                                # If no tools were run, this is likely the final result
+                                log_lines.append(f"🤖 Final Answer:\n{filtered_content}")
+                                current_output = filtered_content
+                                usage["output"] = get_token_estimate(len(current_output), cpt)
+                            else:
+                                # Tools were run, don't update current_output as final yet
+                                pass
+
                         for tc in tool_calls:
                             name, args = tc.get("name", ""), tc.get("args", {})
                             sig = f"{name}::{repr(args)}"
@@ -147,43 +205,25 @@ def run_agent_stream(agent, inputs, config, log_lines, tool_registry, chatbot_hi
                             if _dup_count >= MAX_DUP_CALLS:
                                 log_lines.append(f"⚠️ Repeated tool call {name} x{_dup_count}. Stopping.")
                                 return
-                            log_lines.append(f"🔧 Calling Tool: {name}")
-
-                        if content:
-                            # Filter out thinking process and keep only the final answer
-                            filtered_content = content
-                            
-                            thinking_patterns = [
-                                "太好了", "我找到了", "讓我", "根據", "從搜索結果", "我為您",
-                                "根據搜尋結果", "讓我把", "整理成", "以下", "我看到", "我來查詢",
-                                "好的", "我理解", "首先", "其次", "最後", "總結", "以下是"
-                            ]
-                            
-                            lines = content.split('\n')
-                            final_answer_lines = []
-                            in_thinking = True
-                            
-                            for line in lines:
-                                if in_thinking and (line.strip() == '' or line.strip().startswith('===') or line.strip().startswith('---')):
-                                    in_thinking = False
-                                if not in_thinking:
-                                    final_answer_lines.append(line)
-                                elif line.strip() and not any(line.strip().startswith(p) for p in thinking_patterns):
-                                    final_answer_lines.append(line)
-                            
-                            if final_answer_lines:
-                                filtered_content = '\n'.join(final_answer_lines).strip()
-                            
-                            if tool_calls:
-                                log_lines.append(f"🤖 AI Thinking:\n{content}")
+                            # 顯示工具名稱及關鍵參數（尤其是 command/code/script_path）
+                            if name in ("run_cli_command", "run_python_code", "execute_script"):
+                                if name == "run_cli_command":
+                                    cmd_preview = args.get("command", "")
+                                    if len(cmd_preview) > 500:
+                                        cmd_preview = cmd_preview[:500] + "...[truncated]"
+                                    log_lines.append(f"🔧 Calling Tool: {name}\n$ {cmd_preview}")
+                                elif name == "run_python_code":
+                                    code_preview = args.get("code", "")
+                                    if len(code_preview) > 1000:
+                                        code_preview = code_preview[:1000] + "\n...[truncated]"
+                                    log_lines.append(f"🔧 Calling Tool: {name}\n```python\n{code_preview}\n```")
+                                elif name == "execute_script":
+                                    skill = args.get("skill_name", "")
+                                    script = args.get("script_path", "")
+                                    script_args = args.get("script_args", "")
+                                    log_lines.append(f"🔧 Calling Tool: {name}\nskill={skill}  script={script}  args={script_args}")
                             else:
-                                executed, remaining = try_execute_text_tool_calls(filtered_content, log_lines, tool_registry)
-                                if not executed:
-                                    log_lines.append(f"🤖 Final Answer:\n{filtered_content}")
-                                    current_output = filtered_content
-                                    usage["output"] = get_token_estimate(len(current_output), cpt)
-                                elif remaining:
-                                    log_lines.append(f"🤖 AI Thinking:\n{remaining}")
+                                log_lines.append(f"🔧 Calling Tool: {name}")
                         
                         usage["total"] = sum(v for k, v in usage.items() if k != "total")
                         usage_html = generate_usage_html(usage, max_tokens)
@@ -243,8 +283,15 @@ def run_agent_stream(agent, inputs, config, log_lines, tool_registry, chatbot_hi
                 "請務必使用 正體中文 (Traditional Chinese) 回答，並直接提供摘要（包含當前進度、成果、待辦事項及詢問用戶意向），不要包含任何開場白。"
             )
             try:
-                summary_res = llm.invoke(summary_prompt)
-                current_output = summary_res.content
+                # 使用 streaming 避免 generator 阻塞導致 Gradio 輸入框卡住
+                summary_buffer = ""
+                for chunk in llm.stream(summary_prompt):
+                    chunk_text = chunk.content if hasattr(chunk, "content") else str(chunk)
+                    if chunk_text:
+                        summary_buffer += chunk_text
+                        chatbot_history[-1][1] = summary_buffer
+                        yield chatbot_history, "\n\n".join(log_lines), final_system_prompt, generate_usage_html(usage, max_tokens)
+                current_output = summary_buffer
             except Exception as sum_err:
                 current_output = f"⚠️ 達到步數或 Token 限制，且摘要生成失敗: {sum_err}"
         else:

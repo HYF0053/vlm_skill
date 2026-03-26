@@ -37,3 +37,7 @@ complete_agentic_rag_*.png
 image.png
 
 config/*
+
+# Output folders
+/results/
+/tmp/

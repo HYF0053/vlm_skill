@@ -41,8 +41,10 @@ def create_ui(handler):
                         label="System Prompt", 
                         value=(
                             "You are an intelligent assistant with access to a library of capabilities (skills). "
-                            "Use them to help the user. IMPORTANT: Always respond in Traditional Chinese (正體中文). "
-                            "Provide only the final answer directly in Traditional Chinese, excluding any thinking process or internal reasoning. "
+                            "Use them to help the user. IMPORTANT: Always respond in Traditional Chinese (正體中文).\n\n"
+                            "CRITICAL TOOL EXECUTION RULE:\n"
+                            "- You MUST NOT pretend to have performed an action (e.g., 'I have saved your preference') unless you are providing the actual tool call in the same response.\n"
+                            "- Verbal confirmation should only be given AFTER or ALONGSIDE the tool call markup.\n\n"
                             "CRITICAL MEMORY RULE: 你具備「主動反思」的核心動能。在每一輪對話中，請主動捕捉具備長期價值的『新事實、用戶偏好或決策摘要』，並主動調用對應的「技能 (Skill)」進行結構化儲存。請務必在確實執行成功後，才在回覆中宣告已完成儲存，確保你的回覆精確反映實際操作。\n\n"
                             "When using skills and answering questions, please follow this retrieval priority order:\n"
                             "1. Current Context (Short-term): If the information is within the current conversation window, answer directly.\n"
@@ -55,7 +57,7 @@ def create_ui(handler):
                             "5. Web Search (External Online Knowledge):\n"
                             "   Trigger Conditions: When internal knowledge has no results or the question involves general latest external technical knowledge."
                         ),
-                        lines=10
+                        lines=12
                     )
 
                 user_prompt_input = gr.Textbox(label="💬 User Query", placeholder="Enter your command... (Press Enter to send)", lines=3)
@@ -88,6 +90,9 @@ def create_ui(handler):
                     with gr.Column():
                         image_max_size_slider = gr.Slider(512, 4096, value=1024, step=512, label="Max Image Dimension")
                         max_agent_steps_slider = gr.Slider(5, 50, value=15, step=1, label="Max Agent Steps")
+                        asr_url_input = gr.Textbox(label="🎙️ ASR API URL", value="http://localhost:8000", placeholder="http://<host>:<port>")
+                        refresh_asr_models_btn = gr.Button("🔄 Refresh ASR Models")
+                        asr_model_dropdown = gr.Dropdown(label="🎙️ ASR Model (現在可用模型)", choices=[], interactive=True, allow_custom_value=True)
 
             # --- TAB 3: Memory Manager ---
             with gr.Tab("🧠 Memory Manager"):
@@ -126,22 +131,25 @@ def create_ui(handler):
         # apply_preset_btn.click(apply_preset, inputs=[session_key_preset], outputs=[session_key_input])
         
         refresh_models_btn.click(handler.refresh_models, inputs=[provider_radio, api_url_input], outputs=[model_dropdown])
+        refresh_asr_models_btn.click(handler.refresh_asr_models, inputs=[asr_url_input], outputs=[asr_model_dropdown])
         
         # Skill Editor refresh
         refresh_skills_btn.click(handler.refresh_skills_list, outputs=[skill_list])
         
         # --- Execution Logic ---
         execution_inputs = [
-            file_upload_input, 
-            provider_radio, 
-            api_url_input, 
-            model_dropdown, 
-            image_max_size_slider, 
-            max_agent_steps_slider, 
-            system_prompt_input, 
-            user_prompt_input, 
-            chatbot, 
-            session_dropdown
+            file_upload_input,
+            provider_radio,
+            api_url_input,
+            model_dropdown,
+            image_max_size_slider,
+            max_agent_steps_slider,
+            system_prompt_input,
+            user_prompt_input,
+            chatbot,
+            session_dropdown,
+            asr_url_input,
+            asr_model_dropdown,
         ]
         execution_outputs = [chatbot, log_output, injected_prompt_output, visual_usage_status, file_upload_input, user_prompt_input]
 

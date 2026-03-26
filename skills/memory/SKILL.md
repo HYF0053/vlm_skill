@@ -1,6 +1,6 @@
 ---
 name: memory
-description: Manage Personal and Project Knowledge. Includes 'user preferences', 'project specs', and high-value structured info like 'tables', 'query results', 'conclusions', and 'plans' with importance scores. Use this to maintain long-term context and decision history.
+description: Save long-term memory and Manage Personal and Project Knowledge. Includes 'user preferences', 'project specs', and high-value structured info like 'tables', 'query results', 'conclusions', and 'plans' with importance scores. Use this to maintain long-term context and decision history.
 ---
 
 ## 🚨 致命問題與嚴格行動準則 (CRITICAL Execution Timing)
@@ -60,6 +60,13 @@ description: Manage Personal and Project Knowledge. Includes 'user preferences',
 
 ---
 
+## 🚫 行動準則：避免重複與混亂
+在執行 `upsert_memory.py` 之前，你**必須**：
+1. **查看當前已有的 Structured Memory**：如果已經有性質相近的 Key (例如已經有 `brand_preference`)，請**直接覆蓋**它，絕對不要自創 `memory_brand` 之類的新 Key。
+2. **語義屬性優先**：不要使用過於空泛的 `preference` 作為 Key，應使用上述標準化表格中的具體 Key 名稱。
+
+---
+
 ## 最佳實踐與範例
 
 **情境 A：使用者明確下達規定 (Keyword: 之後都)**
@@ -79,3 +86,46 @@ User: 請分析一下當前系統的瓶頸，並給出優化計畫。
 AI: (分析並產出詳細計畫)
 Tool: `execute_script("memory", "scripts/upsert_memo_qdrant.py", "-c document_memory -i 'System Optimization Plan' -t '1. Add Redis caching 2. DB Indexing on UserID...' --score 9")`
 # 工具跑完後，AI 再回覆：我已經完成了系統瓶頸分析與優化計畫，並將此高價值結論存入記憶庫 (Score: 9)。
+
+---
+
+## 🛠️ 腳本參數詳解 (Python Script API)
+所有腳本皆位於 `skills/memory/scripts/` 目錄下。
+
+### 1. `upsert_memory.py` (JSON 結構化記憶)
+用於儲存使用者偏好、對話風格、個人檔案等輕量級資訊。
+*   **參數格式**：`python upsert_memory.py <Key> "<Value>" [--type <Type>]`
+*   **參數定義**：
+    *   `Key` (必填)：記憶鍵值 (例如：`brand_preference`, `tone`)。建議遵循上述標準化規範。
+    *   `Value` (必填)：具體的記憶內容。若包含空格請務必用引號包裹。
+    *   `--type` (選填)：記憶類型，可選值為 `preference` (預設), `profile`, `agent_rules`。
+*   **範例**：`execute_script("memory", "scripts/upsert_memory.py", "brand_preference '喜歡 NVIDIA 顯示卡' --type preference")`
+
+### 2. `upsert_memo_qdrant.py` (Qdrant 長期記憶存入)
+用於儲存大量文本、技術文件、Bug 經驗或重要專案決策。
+*   **參數格式**：`python upsert_memo_qdrant.py --collection <Col> --intent_or_type <Type> --content "<Text>" [--score <Score>] [--source <Src>]`
+*   **參數定義**：
+    *   `--collection` / `-c` (必填)：目標集合，目前僅支援 `document_memory`。
+    *   `--intent_or_type` / `-i` (必填)：分類標籤 (例如：`BugFix`, `Spec`, `Requirement`)。
+    *   `--content` / `-t` (必填)：要存儲的詳細文本內容。
+    *   `--score` (選填)：重要性評分 (1.0 - 10.0)，預設為 `5.0`。
+    *   `--source` / `-s` (選填)：來源標籤，預設為 `user_session`。
+*   **範例**：`execute_script("memory", "scripts/upsert_memo_qdrant.py", "-c document_memory -i 'RAG vs LongContext' -t '量化分析結論如下...' --score 9.5")`
+
+### 3. `search_memo_qdrant.py` (Qdrant 語義搜尋)
+用於從長期記憶庫中找回相關知識。
+*   **參數格式**：`python search_memo_qdrant.py "<Query>" [--limit <N>] [--collection <Col>]`
+*   **參數定義**：
+    *   `query` (必填)：搜尋關鍵字或自然語言描述。
+    *   `--limit` (選填)：回傳結果數量，預設為 `5`。
+    *   `--collection` / `-c` (選填)：指定搜尋集合。未指定則搜尋所有配置中的集合。
+*   **範例**：`execute_script("memory", "scripts/search_memo_qdrant.py", "FastAPI CORS 解決方案 --limit 3")`
+
+### 4. `prune_memo_qdrant.py` (長期記憶清理)
+用於刪除老舊且低重要性的記憶點。
+*   **參數格式**：`python prune_memo_qdrant.py [--days <D>] [--max-score <S>] [--collection <Col>]`
+*   **參數定義**：
+    *   `--days` (選填)：刪除幾天前之前的資料，預設為 `30`。
+    *   `--max-score` (選填)：僅刪除分數低於此數值的資料，預設為 `5.9`。
+    *   `--collection` / `-c` (選填)：指定清理的集合。
+*   **範例**：`execute_script("memory", "scripts/prune_memo_qdrant.py", "--days 60 --max-score 4.0")`

@@ -294,16 +294,20 @@ class SkillMiddleware(AgentMiddleware):
             "CRITICAL BEHAVIORAL RULE:\n"
             "  - You are stateless between sessions. You CANNOT 'remember' anything just by saying 'I will remember this'.\n"
             "  - If the user states a rule, preference, habit, or project fact, you MUST IMMEDIATELY use `execute_script` to save it via the memory or rag skill.\n"
-            "  - DO NOT say 'Okay, I will answer shortly' without ACTUALLY running the script to save the rule.\n\n"
+            "  - DO NOT say 'Okay, I will answer shortly' without ACTUALLY running the script to save the rule.\n"
+            "  - FILE PATH RULE (CRUCIAL): \n"
+            "    1. When calling `execute_script`, the working directory is `skills/<skill_name>/`. To save output correctly to the global results folder, YOU MUST prepend `../../results/` to output arguments. Example: `execute_script('pdf', 'scripts/convert.py', 'doc.pdf ../../results/output.png')`.\n"
+            "    2. When writing Python code or CLI commands, output them to `./results/` and temporary data to `./tmp/` since the default working directory is the project root.\n"
+            "    3. NEVER save files inside the `skills/` directories or project root arbitrarily.\n\n"
             "CALLABLE TOOLS (all tools you may invoke directly):\n"
             "  - load_skill_overview(skill_name: str) -> str\n"
             "  - read_skill_file(skill_name: str, file_path: str) -> str\n"
             "  - execute_script(skill_name: str, script_path: str, script_args: str = \"\") -> str\n"
             "      Run a Python script from the skill's scripts/ folder.\n"
-            "      Example: execute_script('pdf', 'scripts/convert_pdf_to_images.py', 'doc.pdf /tmp/out')\n"
+            "      Example: execute_script('pdf', 'scripts/convert_pdf_to_images.py', 'doc.pdf ../../results/out')\n"
             "  - run_cli_command(command: str, working_directory: str = \"\") -> str\n"
             "      Run any shell/CLI command (pdftotext, pip install, python -c ..., etc.)\n"
-            "      Example: run_cli_command('pdftotext input.pdf output.txt', '/tmp')\n"
+            "      Example: run_cli_command('pdftotext input.pdf output.txt', './results/')\n"
             "  - run_python_code(code: str, working_directory: str = \"\") -> str\n"
             "      Write Python code you compose yourself and execute it immediately.\n"
             "      Use this when you want to implement something based on skill examples\n"
@@ -334,8 +338,10 @@ class SkillMiddleware(AgentMiddleware):
         )
         
         conflict_rule = (
-            "\n\n🚨 CRITICAL MEMORY RULE: The STRUCTURED MEMORY block above represents the ABSOLUTE TRUTH of the user's CURRENT status and preferences. "
-            "If past conversation history contradicts the Structured Memory (e.g. user changed their mind later), you MUST IGNORE the history and STRICTLY OBEY the Structured Memory. "
+            "\n\n🚨 CRITICAL MEMORY RULE: The STRUCTURED MEMORY block above represents the ABSOLUTE TRUTH of the user's CURRENT status and preferences.\n"
+            "   - IF you want to update something that looks like an existing label (Pref/Rule/Profile) above, YOU MUST USE THE EXACT SAME LABEL to overwrite it.\n"
+            "   - DO NOT create redundant labels (e.g. if 'brand_preference' exists, do not create 'memory_preference').\n"
+            "   - If past conversation history contradicts the Structured Memory, you MUST IGNORE the history and STRICTLY OBEY the Structured Memory. "
             "If a user's preference is ALREADY recorded or up-to-date in the Structured Memory, DO NOT call `upsert_memory` again for it."
         )
             
