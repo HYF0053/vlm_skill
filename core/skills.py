@@ -170,6 +170,9 @@ def _create_tools_for_repo(repo: SkillRepository):
             with open(live_log_path, "a", encoding="utf-8") as f: f.write(f"\n❌ {err_msg}")
             return err_msg, -1
 
+    # Auto-indexing of results/ and tmp/ is now handled by core/file_watcher.py
+    # (FileWatcher daemon started in app.py — no snapshot diffing needed here)
+
     @tool
     def execute_script(skill_name: str, script_path: str, script_args: str = "") -> str:
         """Execute a Python script inside a skill's directory with real-time feedback (Check terminal or Live Log)."""
@@ -178,13 +181,12 @@ def _create_tools_for_repo(repo: SkillRepository):
         abs_script = os.path.normpath(os.path.join(skill.path, script_path))
         if not abs_script.startswith(os.path.abspath(skill.path)) or not os.path.isfile(abs_script):
             return "Invalid script path."
-        
-        # Use -u for unbuffered python output
+
         cmd = [sys.executable, "-u", abs_script] + shlex.split(script_args)
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
         env["PYTHONUNBUFFERED"] = "1"
-        
+
         output, code = _run_process_realtime(cmd, skill.path, env)
         return f"[stdout/stderr]\n{output}\n[exit code] {code}"
 
@@ -195,7 +197,7 @@ def _create_tools_for_repo(repo: SkillRepository):
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
         env["PYTHONUNBUFFERED"] = "1"
-        
+
         output, code = _run_process_realtime(command, cwd, env)
         return f"[stdout/stderr]\n{output}\n[exit code] {code}"
 
@@ -216,8 +218,9 @@ def _create_tools_for_repo(repo: SkillRepository):
         except Exception as e: return f"Error: {e}"
         finally:
             if os.path.exists(tmp_path): os.remove(tmp_path)
-    
+
     return [load_skill_overview, read_skill_file, execute_script, run_cli_command, run_python_code]
+
 
 def create_skill_tools(repo: SkillRepository, memory_store: Any = None, session_key: str = "main"):
     """
@@ -322,13 +325,11 @@ class SkillMiddleware(AgentMiddleware):
         memory_addendum = ""
         if self.memory_store:
             try:
-                # Dynamically delegate formatting to the memory skill if it exists
-                from skills.memory.lib.logic import format_memory_for_prompt
+                from core.memory import format_memory_for_prompt
                 mem = self.memory_store.load_thread(self.session_key)
                 memory_addendum = format_memory_for_prompt(mem)
-            except (ImportError, ModuleNotFoundError):
-                # Fallback if the skill's logic is missing
-                memory_addendum = "\n\n(Memory system logic unavailable.)\n"
+            except Exception:
+                memory_addendum = "\n\n(Memory system unavailable.)\n"
             
         import datetime
         current_time_info = (

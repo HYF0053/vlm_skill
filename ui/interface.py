@@ -10,17 +10,21 @@ def create_ui(handler):
             with gr.Tab("🤖 Agent"):
                 with gr.Group():
                     gr.Markdown("### 🔑 Session Management")
-                    initial_choices = handler.memory_store.list_session_keys() or ["main"]
-                    if not handler.memory_store.list_session_keys():
-                        from core.memory import ThreadMemory
-                        handler.memory_store.save_thread(ThreadMemory(session_key="main"))
 
-                    initial_session = initial_choices[0]
+                    # Ensure at least one session exists
+                    if not handler.memory_store.list_threads():
+                        from core.memory import ThreadMemory
+                        handler.memory_store.save_thread(ThreadMemory(
+                            session_key=handler.memory_store.get_next_session_name(),
+                        ))
+
+                    initial_keys    = handler.memory_store.list_session_keys()
+                    initial_session = initial_keys[0] if initial_keys else ""
 
                     with gr.Row():
                         session_dropdown = gr.Dropdown(
                             label="Select Session", 
-                            choices=initial_choices, 
+                            choices=initial_keys, 
                             value=initial_session,
                             scale=4,
                             interactive=True,
@@ -177,12 +181,16 @@ def create_ui(handler):
         refresh_mem_btn.click(handler.list_memories, outputs=mem_table)
         mem_key_inspect.submit(handler.inspect_memory, inputs=mem_key_inspect, outputs=mem_detail)
         
-        def delete_and_refresh(key):
-            msg = handler.delete_memory(key)
+        def delete_and_refresh(key, provider, api_url, model_name):
+            msg = handler.delete_memory(key, provider=provider, api_url=api_url, model_name=model_name)
             table = handler.list_memories()
             return msg, table
         
-        delete_mem_btn.click(delete_and_refresh, inputs=mem_key_to_delete, outputs=[mem_status, mem_table])
+        delete_mem_btn.click(
+            delete_and_refresh,
+            inputs=[mem_key_to_delete, provider_radio, api_url_input, model_dropdown],
+            outputs=[mem_status, mem_table]
+        )
         
         # Auto-load memories on tab render
         demo.load(handler.list_memories, outputs=mem_table)
@@ -215,6 +223,10 @@ def create_ui(handler):
         
         # For buttons, we only update the dropdown value, which then triggers .change() automatically
         add_session_btn.click(handler.on_add_session_simple, outputs=[session_dropdown])
-        delete_session_btn.click(handler.on_delete_session_simple, inputs=[session_dropdown], outputs=[session_dropdown, chatbot])
+        delete_session_btn.click(
+            handler.on_delete_session_simple,
+            inputs=[session_dropdown, provider_radio, api_url_input, model_dropdown],
+            outputs=[session_dropdown, chatbot]
+        )
 
     return demo
