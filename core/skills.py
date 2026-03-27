@@ -337,16 +337,8 @@ class SkillMiddleware(AgentMiddleware):
             f"Current Date and Time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
             f"Day of the Week: {datetime.datetime.now().strftime('%A')}\n"
         )
-        
-        conflict_rule = (
-            "\n\n🚨 CRITICAL MEMORY RULE: The STRUCTURED MEMORY block above represents the ABSOLUTE TRUTH of the user's CURRENT status and preferences.\n"
-            "   - IF you want to update something that looks like an existing label (Pref/Rule/Profile) above, YOU MUST USE THE EXACT SAME LABEL to overwrite it.\n"
-            "   - DO NOT create redundant labels (e.g. if 'brand_preference' exists, do not create 'memory_preference').\n"
-            "   - If past conversation history contradicts the Structured Memory, you MUST IGNORE the history and STRICTLY OBEY the Structured Memory. "
-            "If a user's preference is ALREADY recorded or up-to-date in the Structured Memory, DO NOT call `upsert_memory` again for it."
-        )
             
         orig = request.system_message.content
-        new_content = orig + current_time_info + memory_addendum + conflict_rule + skills_addendum
+        new_content = orig + current_time_info + memory_addendum + skills_addendum
         
         return handler(request.override(system_message=SystemMessage(content=new_content)))

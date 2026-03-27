@@ -49,7 +49,6 @@ def create_ui(handler):
                             "CRITICAL TOOL EXECUTION RULE:\n"
                             "- You MUST NOT pretend to have performed an action (e.g., 'I have saved your preference') unless you are providing the actual tool call in the same response.\n"
                             "- Verbal confirmation should only be given AFTER or ALONGSIDE the tool call markup.\n\n"
-                            "CRITICAL MEMORY RULE: 你具備「主動反思」的核心動能。在每一輪對話中，請主動捕捉具備長期價值的『新事實、用戶偏好或決策摘要』，並主動調用對應的「技能 (Skill)」進行結構化儲存。請務必在確實執行成功後，才在回覆中宣告已完成儲存，確保你的回覆精確反映實際操作。\n\n"
                             "When using skills and answering questions, please follow this retrieval priority order:\n"
                             "1. Current Context (Short-term): If the information is within the current conversation window, answer directly.\n"
                             "2. Memory (Personal/Project Knowledge):\n"

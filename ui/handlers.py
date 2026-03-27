@@ -260,13 +260,20 @@ class UIHandler:
 
             # Memory save
             final_answer = chatbot_history[-1][1]
-            
 
+            # ── Inline turn metadata extraction (zero LLM calls) ──────────────
+            try:
+                from core.turn_meta import extract_turn_meta
+                turn_meta = extract_turn_meta(query, final_answer)
+            except Exception as _tm_err:
+                turn_meta = None
+                print(f"[UIHandler] turn_meta extraction failed: {_tm_err}")
+            # ──────────────────────────────────────────────────────────────────
 
             try:
                 # 更新長期記憶
                 updated_mem = None
-                gen_mem = self.memory_store.record_turn(session_key, query, final_answer, attachments=current_attachments, usage=usage)
+                gen_mem = self.memory_store.record_turn(session_key, query, final_answer, attachments=current_attachments, usage=usage, turn_meta=turn_meta)
                 
                 try:
                     while True:
