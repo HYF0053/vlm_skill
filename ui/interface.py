@@ -92,7 +92,7 @@ def create_ui(handler):
                         model_dropdown = gr.Dropdown(label="Select Model", choices=[], interactive=True, allow_custom_value=True)
                     with gr.Column():
                         image_max_size_slider = gr.Slider(512, 4096, value=1024, step=512, label="Max Image Dimension")
-                        max_agent_steps_slider = gr.Slider(5, 50, value=15, step=1, label="Max Agent Steps")
+                        max_agent_steps_slider = gr.Slider(5, 100, value=30, step=1, label="Max Agent Steps")
                         asr_url_input = gr.Textbox(label="🎙️ ASR API URL", value="http://localhost:8000", placeholder="http://<host>:<port>")
                         refresh_asr_models_btn = gr.Button("🔄 Refresh ASR Models")
                         asr_model_dropdown = gr.Dropdown(label="🎙️ ASR Model (現在可用模型)", choices=[], interactive=True, allow_custom_value=True)

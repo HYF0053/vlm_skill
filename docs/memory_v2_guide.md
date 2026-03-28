@@ -1,75 +1,58 @@
 # 長期記憶系統架構升級說明 (Memory V2)
 
-本文件說明 `vlm_skill` 長期記憶系統在 2026 年 3 月進行的重大架構優化。
+本文件說明 `vlm_skill` 長期記憶系統的核心架構，特別針對 2026 年 3 月優化後的「會話-片段」二層模型進行定義。
 
-## 1. 核心改進點概要
+## 1. 核心流程概要
 
-針對舊版系統搜尋片段化、語意斷裂以及缺乏時間感知等問題，V2 版本引入了以下三大核心技術：
-- **即時萃取 (Turn-level Metadata)**：對話中自動、零延遲地產出摘要與實體指標。
-- **階層式索引 (Hierarchical Indexing)**：在 Qdrant 建立 Session-level 與 Chunk-level 的雙向鏈結結構。
-- **兩步式 Top-K 搜尋 (Two-pass Search)**：先定位會話 (Session) 再搜尋片段 (Chunk)，並引入時間衰減評分。
+針對舊版系統搜尋片段化、語義斷裂等問題，V2 版本將記憶分為「索引點」與「原始內容」：
+- **即時萃取 (Turn-level Metadata)**：每一輪對話後，自動由 `core/turn_meta.py` 產出摘要與實體指標。
+- **階層式索引 (Hierarchical Indexing)**：在 Qdrant 建立 Session-level 與 Chunk-level 的對應結構。
+- **兩步式檢索 (Two-pass Search)**：先依據語意與實體權重過濾會話 (Session)，再深入定位對話片段 (Chunk)。
 
 ---
 
-## 2. 詳細技術實作
+## 2. 詳細技術實作與 Payload 結構
 
 ### 2.1 即時萃取模組 (`core/turn_meta.py`)
-為了解決封存時才批次產生摘要導致的細節丟失問題，現在系統在每一輪 AI 回答後，會即時執行純文字萃取：
-- **零 LLM 呼叫**：使用正則表達式 (Regex) 與高頻詞統計，確保 UI 無延遲。
-- **萃取內容**：
-    - `summary`: 「用戶問題 → AI 精簡回答」的結構化摘要。
-    - `entities`: 自動識別 CJK 專有名詞與英文術語。
-    - `intent`: 識別用戶意圖（explain/create/compare/fix 等）。
-    - `time_refs`: 抓取文字中的時間詞（今天、昨天、2026-xx-xx）。
-- **儲存位置**：直接附加在 `recent_messages` 裡 AI 訊息的 `turn_meta` 欄位中。
+系統在每一輪 AI 回答後執行純文字萃取（零 LLM 負擔）：
+- **summary**: 格式為 「用戶問題 → AI 預覽」。
+- **entities**: 萃取 CJK 常用名詞與英文術語。
+- **intent**: 識別意圖（explain/create/compare/fix 等）。
+- **time_refs**: 抓取時間詞（今天、2026-xx-xx）。
 
-### 2.2 兩層向量索引結構
-封存流程 (`archive_and_summarize_session`) 現在會在 Qdrant 建立兩種不同層級的 Point：
+### 2.2 Qdrant 儲存 Schema
+在封存 (Archive) 時，Qdrant 內的 Payload 命名約定如下（請注意名稱差異）：
 
-1.  **Session Summary Point** (`type="session_summary"`)
-    - 儲存該 Session 的全局摘要、所有實體合集與轉帳輪數。
-    - 作為搜尋的「入口點」，解決跨會話定位問題。
-2.  **Chunk Point** (`type="chunk"`)
-    - 帶有 `prev_chunk_id` 與 `next_chunk_id` 指標。
-    - 帶有 `session_point_id` 反查 session 概覽。
-    - 帶有 `indexed_at_unix` 用於時間權重排序。
+#### 1. Session Summary Point (`type="session_summary"`)
+- **all_entities**: 該 Session 出現次數最多的前 30 個實體（回想時的主索引）。
+- **full_summary**: 前 5 輪對話的彙整摘要。
+- **session_key**: 作為與 Chunk 反向連結的 ID。
 
-### 2.3 搜尋策略升級 (`core/mem_scripts/mem_search.py`)
-搜尋引擎現在支援 `--mode two-pass`（預設開啟）：
-1.  **會話過濾**：先從 `session_summary` 中找到最相關的 3 個 Session。
-2.  **精準搜尋**：在該 3 個 Session 內尋找 Top-K 個相關 Chunk（即使它們在時間上相距甚遠也能被一次抓齊）。
-3.  **時間衰減 (Time-Decay)**：
-    - 計算 `blended_score = (1-α) * semantic_score + α * recency_score`。
-    - 確保「最新」的修正與決策能夠排在舊訊息之前。
-4.  **上下文補全**：自動拉取 Top-K 核心結果前後的相鄰 Chunk，提供 AI 連貫的閱讀體驗。
+#### 2. Chunk Point (`type="chunk"`)
+- **tags**: 對應單一 Turn 的實體 (Entities)。在此層級稱之為 `tags`。
+- **prev_chunk_id / next_chunk_id**: 用於擴展前後文的雙向指標。
+- **importance_score**: 根據內容長度計算的 1-9 分權重。
+- **indexed_at_unix**: 檢索時計算「時間衰減」的時間戳記。
 
 ---
 
-## 3. 使用範例 (CLI)
+## 3. 搜尋策略細節 (`mem_search.py`)
 
-### 3.1 進階搜尋
-```bash
-# 基本兩步搜尋（語意預設佔 75%，時間佔 25%）
-python core/mem_scripts/mem_search.py "RTX 4090 的選購建議" --mode two-pass
-
-# 增加時間權重（當你想要搜尋最新的偏好設定時，將 weight 調高）
-python core/mem_scripts/mem_search.py "我的模型設定" --time-weight 0.40
-
-# 展開更多前後文（展開前後 2 個 chunk）
-python core/mem_scripts/mem_search.py "開發計畫" --context-window 2
-```
-
-### 3.2 讀取完整對話
-```bash
-# 根據搜尋結果中提示的指令讀取完整 JSON 內容
-python core/mem_scripts/mem_search.py read_chunk 'data/memory/archived/2026-03-27_sess_xxx.json' '[5,9]'
-```
+搜尋引擎預設支援 `--mode two-pass`：
+1.  **會話過濾 (Pass 1)**：先從 `session_summary` 中找到最相關的 3 個 Session。
+2.  **精準搜尋 (Pass 2)**：在該 3 個 Session 內細挖相關 Chunk（即使時間相距甚遠也能被一次抓齊）。
+3.  **分數混合與時間衰減 (Time-Decay)**：
+    - `blended_score = (1-α) * semantic_score + α * recency_score`。
+    - 確保「最新」的修正與偏好設定（如 ASUS vs MSI 的決策）能排在舊訊息之前。
+4.  **上下文補全**：根據 Chunk 的導航指標，自動拉取 Top-K 結果前後的連貫對話。
 
 ---
 
-## 4. 維護與相容性
-- **向下相容**：系統偵測到舊版（無 metadata）的 Point 時，會自動降級到 `simple` 搜尋模式。
-- **崩潰恢復**：封存流程中加入了 `session_point_id` 與 `archive_state` 的檢查點，若後台程式當機，下次重啟會自動續傳。
+## 4. 維護與故障排除
+- **Payload 找不到 entities 欄位？**：請檢查 `all_entities` (Session 級別) 或 `tags` (Chunk 級別)。
+- **搜尋不到最新對話？**：請確認對話是否已進入 `archive_state: done`。
+- **如何讀取原始資料？**：透過 `read_chunk` 命令讀取 Payload 中 `archived_file` 指定的完整 JSON。
 
 ---
-*Last Updated: 2026-03-27*
+*Last Updated: 2026-03-28*
+

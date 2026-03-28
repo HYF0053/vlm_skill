@@ -42,6 +42,7 @@ BINARY_EXTS = {
     ".ckpt", ".pt", ".safetensors", ".onnx", ".trt",
     ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp",
     ".mp4", ".avi", ".mov", ".pdf", ".zip", ".tar", ".gz",
+    ".mp3", ".wav", ".flac", ".m4a", ".ogg",
 }
 
 # Patterns to EXCLUDE from watching (prevents feedback loops)
@@ -188,9 +189,14 @@ def index_path(abs_path: str, project_root: str, cfg: dict, is_delete: bool = Fa
     This is the ONLY function that touches Qdrant.
     """
     rel_path = os.path.relpath(abs_path, project_root).replace("\\", "/")
+    ext = os.path.splitext(abs_path)[1].lower() if not os.path.isdir(abs_path) else ""
 
     if _is_excluded(rel_path):
         logger.debug("Skipping excluded path: %s", rel_path)
+        return
+
+    if not os.path.isdir(abs_path) and ext not in INDEXABLE_EXTS and ext not in BINARY_EXTS:
+        logger.debug("Skipping unsupported extension: %s", ext)
         return
 
     # ── Handle deletion ──────────────────────────────────────────────────────

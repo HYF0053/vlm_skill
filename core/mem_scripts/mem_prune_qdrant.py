@@ -46,7 +46,7 @@ def prune_collection(collection: str, cutoff_ts: int, max_score: float, cfg: dic
     filter_payload = {
         "filter": {
             "must": [
-                {"key": "timestamp", "range": {"lt": cutoff_ts}},
+                {"key": "indexed_at_unix", "range": {"lt": cutoff_ts}},
                 {"key": "importance_score", "range": {"lt": max_score}},
             ]
         }

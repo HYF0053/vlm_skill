@@ -380,7 +380,7 @@ def print_hit(i: int, hit: dict, show_full: bool = False) -> None:
             print(f"    session={p.get('session_key')}  chunk={chunk_idx}  turns={turn_range}{nav_str}")
             print(f"    summary: {p.get('summary', '')}")
             if archived_file:
-                print(f"    → read full: python core/mem_scripts/mem_search.py read_chunk '{archived_file}' {turn_range}")
+                print(f"    → read full: python core/mem_scripts/mem_search.py read_chunk '{archived_file}' '{turn_range}'")
 
         if show_full and ptype != "session_summary":
             full = read_full_conversation(p)
@@ -426,9 +426,9 @@ def cmd_read_chunk(archived_file: str, turn_range_str: str) -> None:
     if len(nums) < 2:
         print(f"❌ Invalid turn_range: {turn_range_str}")
         return
-    payload = {"archived_file": archived_file, "turn_range": nums[:2]}
+    payload = {"archived_file": archived_file.strip("'\""), "turn_range": nums[:2]}
     full = read_full_conversation(payload)
-    if not full:
+    if not full or not full.get("turns"):
         print(f"\u274c Could not read: {archived_file}")
         return
     print(f"\ud83d\udcd6 {archived_file}  turns={nums[:2]}\n")
@@ -446,7 +446,9 @@ def cmd_read_chunk(archived_file: str, turn_range_str: str) -> None:
 def main():
     # Sub-command: read_chunk — fetch full turns from an archived file
     if len(sys.argv) >= 4 and sys.argv[1] == "read_chunk":
-        cmd_read_chunk(sys.argv[2], sys.argv[3])
+        # Handle split turn_range e.g. "python mem_search.py read_chunk file.json [1, 5]"
+        # sys.argv[2] is archived_file, sys.argv[3:] is the turn_range
+        cmd_read_chunk(sys.argv[2], " ".join(sys.argv[3:]))
         return
 
     parser = argparse.ArgumentParser(
