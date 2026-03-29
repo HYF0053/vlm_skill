@@ -1,182 +1,153 @@
 ---
-name: "senior-computer-vision"
-description: Computer vision engineering skill for object detection, image segmentation, and visual AI systems. Covers CNN and Vision Transformer architectures, YOLO/Faster R-CNN/DETR detection, Mask R-CNN/SAM segmentation, and production deployment with ONNX/TensorRT. Includes PyTorch, torchvision, Ultralytics, Detectron2, and MMDetection frameworks. Use when building detection pipelines, training custom models, optimizing inference, or deploying vision systems.
+name: "ultralytics-expert"
+description: Computer vision engineering skill focused exclusively on the Ultralytics framework for object detection, instance segmentation, image classification, and pose estimation. Covers dataset preparation, training, and production deployment with ONNX/TensorRT.
 ---
 
-# Senior Computer Vision Engineer
+# Ultralytics YOLO Expert
 
-Production computer vision engineering skill for object detection, image segmentation, and visual AI system deployment.
+Production computer vision engineering skill focused on the Ultralytics YOLO framework (v7-v12). Optimized for rapid development, experiment tracking, and production-grade deployment.
 
 ## Table of Contents
 
-- [Quick Start](#quick-start)
-- [Core Expertise](#core-expertise)
-- [Tech Stack](#tech-stack)
-- [Workflow 1: Object Detection Pipeline](#workflow-1-object-detection-pipeline)
-- [Workflow 2: Model Optimization and Deployment](#workflow-2-model-optimization-and-deployment)
-- [Workflow 3: Custom Dataset Preparation](#workflow-3-custom-dataset-preparation)
-- [Architecture Selection Guide](#architecture-selection-guide)
+- [Project Structure & Paths](#project-structure--paths)
+- [Workflow 1: Dataset Engineering](#workflow-1-dataset-engineering)
+- [Workflow 2: Training Pipeline](#workflow-2-training-pipeline)
+- [Workflow 3: Validation & Prediction](#workflow-3-validation--prediction)
+- [Workflow 4: Export & Optimization](#workflow-4-export--optimization)
+- [YOLO Model Selection Guide (2026 Edition)](#yolo-model-selection-guide-2026-edition)
+- [Supported Architecture Metadata](#supported-architecture-metadata)
 - [Reference Documentation](#reference-documentation)
-- [Common Commands](#common-commands)
 
-## Quick Start
+---
 
+## Project Structure & Paths
+
+All experiments and data are anchored to **`PROJECT_ROOT`**.
+
+### Directory Layout
+- **Datasets**: `$PROJECT_ROOT/datasets/[dataset_name]/`
+- **Pretrained Weights**: `$PROJECT_ROOT/weights/` (managed via `ultralytics.settings`)
+- **Results**: `$PROJECT_ROOT/results/[name]_[timestamp]/`
+    - `hyperparameters.yaml`: Your input configuration.
+    - `args.yaml`: The actual parameters used by the engine.
+    - `weights/`: Best and last weights (.pt).
+
+### Weight Management
+To ensure a clean workspace, weights are automatically directed to the project's weights folder:
+```python
+from ultralytics import settings
+settings.update({"weights_dir": "$PROJECT_ROOT/weights"})
+```
+
+### Strict Agent Protocol
+1. **NO DIRECT CLI**: Do not use the `yolo` command directly (CLI is disabled in Docker).
+2. **USE SKILL SCRIPTS**: Always use the provided Python scripts.
+3. **UNIFIED FOLDERS**: All related files (config, models, logs) for a single run stay in the SAME timestamped folder.
+
+---
+
+## Workflow 1: Dataset Engineering
+
+### Step 1: Audit and Clean
 ```bash
-# Generate training configuration for YOLO or Faster R-CNN
-python scripts/vision_model_trainer.py models/ --task detection --arch yolov8
+# Analyze raw data
+python $PROJECT_ROOT/skills/computer-vision/scripts/dataset_pipeline_builder.py $PROJECT_ROOT/data/raw/ --analyze
 
-# Analyze model for optimization opportunities (quantization, pruning)
-python scripts/inference_optimizer.py model.pt --target onnx --benchmark
-
-# Build dataset pipeline with augmentations
-python scripts/dataset_pipeline_builder.py images/ --format coco --augment
+# Clean corrupted files
+python $PROJECT_ROOT/skills/computer-vision/scripts/dataset_pipeline_builder.py $PROJECT_ROOT/data/raw/ --clean --output $PROJECT_ROOT/data/cleaned/
 ```
 
-## Core Expertise
-
-This skill provides guidance on:
-
-- **Object Detection**: YOLO family (v5-v11), Faster R-CNN, DETR, RT-DETR
-- **Instance Segmentation**: Mask R-CNN, YOLACT, SOLOv2
-- **Semantic Segmentation**: DeepLabV3+, SegFormer, SAM (Segment Anything)
-- **Image Classification**: ResNet, EfficientNet, Vision Transformers (ViT, DeiT)
-- **Video Analysis**: Object tracking (ByteTrack, SORT), action recognition
-- **3D Vision**: Depth estimation, point cloud processing, NeRF
-- **Production Deployment**: ONNX, TensorRT, OpenVINO, CoreML
-
-## Tech Stack
-
-| Category | Technologies |
-|----------|--------------|
-| Frameworks | PyTorch, torchvision, timm |
-| Detection | Ultralytics (YOLO), Detectron2, MMDetection |
-| Segmentation | segment-anything, mmsegmentation |
-| Optimization | ONNX, TensorRT, OpenVINO, torch.compile |
-| Image Processing | OpenCV, Pillow, albumentations |
-| Annotation | CVAT, Label Studio, Roboflow |
-| Experiment Tracking | MLflow, Weights & Biases |
-| Serving | Triton Inference Server, TorchServe |
-
-## Workflow 1: Object Detection Pipeline
-
-Use this workflow when building an object detection system from scratch.
-
-### Step 1: Define Detection Requirements
-
-Analyze the detection task requirements:
-
-```
-Detection Requirements Analysis:
-- Target objects: [list specific classes to detect]
-- Real-time requirement: [yes/no, target FPS]
-- Accuracy priority: [speed vs accuracy trade-off]
-- Deployment target: [cloud GPU, edge device, mobile]
-- Dataset size: [number of images, annotations per class]
-```
-
-### Step 2: Select Detection Architecture
-
-Choose architecture based on requirements:
-
-| Requirement | Recommended Architecture | Why |
-|-------------|-------------------------|-----|
-| Real-time (>30 FPS) | YOLOv8/v11, RT-DETR | Single-stage, optimized for speed |
-| High accuracy | Faster R-CNN, DINO | Two-stage, better localization |
-| Small objects | YOLO + SAHI, Faster R-CNN + FPN | Multi-scale detection |
-| Edge deployment | YOLOv8n, MobileNetV3-SSD | Lightweight architectures |
-| Transformer-based | DETR, DINO, RT-DETR | End-to-end, no NMS required |
-
-### Step 3: Prepare Dataset
-
-Convert annotations to required format:
-
+### Step 2: Convert and Split
 ```bash
-# COCO format (recommended)
-python scripts/dataset_pipeline_builder.py data/images/ \
-    --annotations data/labels/ \
-    --format coco \
-    --split 0.8 0.1 0.1 \
-    --output data/coco/
+# Convert to YOLO format
+python $PROJECT_ROOT/skills/computer-vision/scripts/dataset_pipeline_builder.py $PROJECT_ROOT/data/cleaned/ --format yolo --output $PROJECT_ROOT/datasets/my_dataset
 
-# Verify dataset
-python -c "from pycocotools.coco import COCO; coco = COCO('data/coco/train.json'); print(f'Images: {len(coco.imgs)}, Categories: {len(coco.cats)}')"
+# Split into train/val/test
+python $PROJECT_ROOT/skills/computer-vision/scripts/dataset_pipeline_builder.py $PROJECT_ROOT/datasets/my_dataset --split 0.8 0.1 0.1 --output $PROJECT_ROOT/datasets/my_dataset
 ```
 
-### Step 4: Configure Training
+---
 
-Generate training configuration:
+## Workflow 2: Training Pipeline
 
+### Step 1: Create Config
+Generate the timestamped experiment folder and the YAML blueprint.
 ```bash
-# For Ultralytics YOLO
-python scripts/vision_model_trainer.py data/coco/ \
-    --task detection \
-    --arch yolov8m \
-    --epochs 100 \
-    --batch 16 \
-    --imgsz 640 \
-    --output configs/
-
-# For Detectron2
-python scripts/vision_model_trainer.py data/coco/ \
-    --task detection \
-    --arch faster_rcnn_R_50_FPN \
-    --framework detectron2 \
-    --output configs/
+python $PROJECT_ROOT/skills/computer-vision/scripts/create_config.py \
+    --model yolo11n \
+    --data $PROJECT_ROOT/datasets/my_dataset/data.yaml \
+    --epochs 100 --batch 16
 ```
+> **Note**: This will automatically create a folder like: `results/my_dataset_yolo11n_20260329_145500/`
 
-### Step 5: Train and Validate
-
+### Step 2: Run Training
+Pass the generated config file in the timestamped folder.
 ```bash
-# Ultralytics training
-yolo detect train data=data.yaml model=yolov8m.pt epochs=100 imgsz=640
-
-# Detectron2 training
-python train_net.py --config-file configs/faster_rcnn.yaml --num-gpus 1
-
-# Validate on test set
-yolo detect val model=runs/detect/train/weights/best.pt data=data.yaml
+python $PROJECT_ROOT/skills/computer-vision/scripts/vision_model_trainer.py \
+    --config $PROJECT_ROOT/results/my_dataset_yolo11n_20260329_145500/hyperparameters.yaml \
+    --mode train
 ```
+> **Note**: All outputs (weights, logs) will stay in this same directory.
 
-### Step 6: Evaluate Results
+---
 
-Key metrics to analyze:
+## Workflow 3: Validation & Prediction
 
-| Metric | Target | Description |
-|--------|--------|-------------|
-| mAP@50 | >0.7 | Mean Average Precision at IoU 0.5 |
-| mAP@50:95 | >0.5 | COCO primary metric |
-| Precision | >0.8 | Low false positives |
-| Recall | >0.8 | Low missed detections |
-| Inference time | <33ms | For 30 FPS real-time |
-
-## Workflow 2: Model Optimization and Deployment
-
-Use this workflow when preparing a trained model for production deployment.
-
-### Step 1: Benchmark Baseline Performance
-
+### Validation
 ```bash
-# Measure current model performance
-python scripts/inference_optimizer.py model.pt \
-    --benchmark \
-    --input-size 640 640 \
-    --batch-sizes 1 4 8 16 \
-    --warmup 10 \
-    --iterations 100
+python $PROJECT_ROOT/skills/computer-vision/scripts/vision_model_trainer.py \
+    --config $PROJECT_ROOT/results/my_dataset_yolo11n_20260329_145500/hyperparameters.yaml \
+    --mode val
 ```
 
-Expected output:
-
-```
-Baseline Performance (PyTorch FP32):
-- Batch 1: 45.2ms (22.1 FPS)
-- Batch 4: 89.4ms (44.7 FPS)
-- Batch 8: 165.3ms (48.4 FPS)
-- Memory: 2.1 GB
-- Parameters: 25.9M
+### Prediction
+```bash
+python $PROJECT_ROOT/skills/computer-vision/scripts/vision_model_trainer.py \
+    --config $PROJECT_ROOT/results/my_dataset_yolo11n_20260329_145500/hyperparameters.yaml \
+    --mode predict \
+    --source $PROJECT_ROOT/data/test_images/
 ```
 
-### Step 2: Select Optimization Strategy
+---
+
+## Workflow 4: Export & Optimization
+
+### Export to ONNX/TensorRT
+```bash
+python $PROJECT_ROOT/skills/computer-vision/scripts/vision_model_trainer.py \
+    --config $PROJECT_ROOT/results/my_dataset_yolo11n_20260329_145500/hyperparameters.yaml \
+    --mode export --dynamic
+```
+
+### Inference Optimization
+
+Use `inference_optimizer.py` to analyze, benchmark, and get optimization recommendations for your models (`.pt`, `.onnx`).
+
+#### 1. Model Analysis (`--analyze`)
+Analyze model structure, parameters, layers, and input/output shapes:
+```bash
+python $PROJECT_ROOT/skills/computer-vision/scripts/inference_optimizer.py \
+    $PROJECT_ROOT/results/my_dataset_yolo11n_20260329_145500/weights/best.pt \
+    --analyze
+```
+
+#### 2. Benchmarking (`--benchmark`)
+Test inference speed, latency, and throughput across different batch sizes:
+```bash
+python $PROJECT_ROOT/skills/computer-vision/scripts/inference_optimizer.py \
+    $PROJECT_ROOT/results/my_dataset_yolo11n_20260329_145500/weights/best.pt \
+    --benchmark --input-size 640 640 --batch-sizes 1 4 8
+```
+
+#### 3. Optimization Recommendations (`--recommend`)
+Get platform-specific acceleration steps and commands based on your deployment target (`gpu`, `cpu`, `edge`, `mobile`, `apple`, `intel`):
+```bash
+python $PROJECT_ROOT/skills/computer-vision/scripts/inference_optimizer.py \
+    $PROJECT_ROOT/results/my_dataset_yolo11n_20260329_145500/weights/best.pt \
+    --recommend --target gpu
+```
+
+#### Selection Guide Matrix
 
 | Deployment Target | Optimization Path |
 |-------------------|-------------------|
@@ -187,253 +158,46 @@ Baseline Performance (PyTorch FP32):
 | Generic CPU | PyTorch → ONNX Runtime |
 | Mobile | PyTorch → TFLite or ONNX Mobile |
 
-### Step 3: Export to ONNX
+---
 
-```bash
-# Export with dynamic batch size
-python scripts/inference_optimizer.py model.pt \
-    --export onnx \
-    --input-size 640 640 \
-    --dynamic-batch \
-    --simplify \
-    --output model.onnx
+## YOLO Model Selection Guide (2026 Edition)
 
-# Verify ONNX model
-python -c "import onnx; model = onnx.load('model.onnx'); onnx.checker.check_model(model); print('ONNX model valid')"
-```
+| Series | Model | mAP | Params | T4 Latency | Best For |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **YOLO26** | `n` | 40.9 | 2.4M | 1.7ms | **LATEST** Next-gen production |
+| (Ultralytics) | `s` | 48.6 | 9.5M | 2.5ms | Balanced speed/accuracy |
+| | `m` | 53.1 | 20.4M | 4.7ms | High-performance detection |
+| **YOLO12** | `n` | 40.6 | 2.6M | 1.6ms | Highly optimized ARM/Edge |
+| (Tian et al.) | `s` | 48.0 | 9.3M | 2.6ms | Robust real-time apps |
+| | `m` | 52.5 | 20.2M | 4.9ms | Advanced segmentation |
+| **YOLO11** | `x` | 54.7 | 56.9M | 11.3ms | SOTA accuracy (2024) |
+| **YOLOv10** | `m` | 51.3 | 15.4M | 5.5ms | Efficient NMS-free models |
+| **YOLOv8** | `m` | 50.2 | 25.9M | 5.9ms | Legacy stable production |
 
-### Step 4: Apply Quantization (Optional)
+*Note: Latency measured at 640x imgsz on NVIDIA T4 GPU.*
 
-For INT8 quantization with calibration:
+---
 
-```bash
-# Generate calibration dataset
-python scripts/inference_optimizer.py model.onnx \
-    --quantize int8 \
-    --calibration-data data/calibration/ \
-    --calibration-samples 500 \
-    --output model_int8.onnx
-```
+## Supported Architecture Metadata
 
-Quantization impact analysis:
+| Model | Author/Org | Date | Key Strength |
+| :--- | :--- | :--- | :--- |
+| **YOLO26** | Ultralytics | 2026 | Enhanced feature extraction & speed |
+| **YOLO12** | Buffalo/UCAS | 2025 | Structural re-parameterization |
+| **YOLO11** | Ultralytics | 2024 | Versatility (Seg/Pose/OBB) |
+| **YOLOv10** | Tsinghua | 2024 | Zero-NMS for low latency |
+| **YOLOv9** | Academia Sinica | 2024 | Programmable Gradient Information |
+| **YOLOv7** | Academia Sinica | 2022 | Concatenation-based architecture |
 
-| Precision | Size | Speed | Accuracy Drop |
-|-----------|------|-------|---------------|
-| FP32 | 100% | 1x | 0% |
-| FP16 | 50% | 1.5-2x | <0.5% |
-| INT8 | 25% | 2-4x | 1-3% |
-
-### Step 5: Convert to Target Runtime
-
-```bash
-# TensorRT (NVIDIA GPU)
-trtexec --onnx=model.onnx --saveEngine=model.engine --fp16
-
-# OpenVINO (Intel)
-mo --input_model model.onnx --output_dir openvino/
-
-# CoreML (Apple)
-python -c "import coremltools as ct; model = ct.convert('model.onnx'); model.save('model.mlpackage')"
-```
-
-### Step 6: Benchmark Optimized Model
-
-```bash
-python scripts/inference_optimizer.py model.engine \
-    --benchmark \
-    --runtime tensorrt \
-    --compare model.pt
-```
-
-Expected speedup:
-
-```
-Optimization Results:
-- Original (PyTorch FP32): 45.2ms
-- Optimized (TensorRT FP16): 12.8ms
-- Speedup: 3.5x
-- Accuracy change: -0.3% mAP
-```
-
-## Workflow 3: Custom Dataset Preparation
-
-Use this workflow when preparing a computer vision dataset for training.
-
-### Step 1: Audit Raw Data
-
-```bash
-# Analyze image dataset
-python scripts/dataset_pipeline_builder.py data/raw/ \
-    --analyze \
-    --output analysis/
-```
-
-Analysis report includes:
-
-```
-Dataset Analysis:
-- Total images: 5,234
-- Image sizes: 640x480 to 4096x3072 (variable)
-- Formats: JPEG (4,891), PNG (343)
-- Corrupted: 12 files
-- Duplicates: 45 pairs
-
-Annotation Analysis:
-- Format detected: Pascal VOC XML
-- Total annotations: 28,456
-- Classes: 5 (car, person, bicycle, dog, cat)
-- Distribution: car (12,340), person (8,234), bicycle (3,456), dog (2,890), cat (1,536)
-- Empty images: 234
-```
-
-### Step 2: Clean and Validate
-
-```bash
-# Remove corrupted and duplicate images
-python scripts/dataset_pipeline_builder.py data/raw/ \
-    --clean \
-    --remove-corrupted \
-    --remove-duplicates \
-    --output data/cleaned/
-```
-
-### Step 3: Convert Annotation Format
-
-```bash
-# Convert VOC to COCO format
-python scripts/dataset_pipeline_builder.py data/cleaned/ \
-    --annotations data/annotations/ \
-    --input-format voc \
-    --output-format coco \
-    --output data/coco/
-```
-
-Supported format conversions:
-
-| From | To |
-|------|-----|
-| Pascal VOC XML | COCO JSON |
-| YOLO TXT | COCO JSON |
-| COCO JSON | YOLO TXT |
-| LabelMe JSON | COCO JSON |
-| CVAT XML | COCO JSON |
-
-### Step 4: Apply Augmentations
-
-```bash
-# Generate augmentation config
-python scripts/dataset_pipeline_builder.py data/coco/ \
-    --augment \
-    --aug-config configs/augmentation.yaml \
-    --output data/augmented/
-```
-
-Recommended augmentations for detection:
-
-```yaml
-# configs/augmentation.yaml
-augmentations:
-  geometric:
-    - horizontal_flip: { p: 0.5 }
-    - vertical_flip: { p: 0.1 }  # Only if orientation invariant
-    - rotate: { limit: 15, p: 0.3 }
-    - scale: { scale_limit: 0.2, p: 0.5 }
-
-  color:
-    - brightness_contrast: { brightness_limit: 0.2, contrast_limit: 0.2, p: 0.5 }
-    - hue_saturation: { hue_shift_limit: 20, sat_shift_limit: 30, p: 0.3 }
-    - blur: { blur_limit: 3, p: 0.1 }
-
-  advanced:
-    - mosaic: { p: 0.5 }  # YOLO-style mosaic
-    - mixup: { p: 0.1 }   # Image mixing
-    - cutout: { num_holes: 8, max_h_size: 32, max_w_size: 32, p: 0.3 }
-```
-
-### Step 5: Create Train/Val/Test Splits
-
-```bash
-python scripts/dataset_pipeline_builder.py data/augmented/ \
-    --split 0.8 0.1 0.1 \
-    --stratify \
-    --seed 42 \
-    --output data/final/
-```
-
-Split strategy guidelines:
-
-| Dataset Size | Train | Val | Test |
-|--------------|-------|-----|------|
-| <1,000 images | 70% | 15% | 15% |
-| 1,000-10,000 | 80% | 10% | 10% |
-| >10,000 | 90% | 5% | 5% |
-
-### Step 6: Generate Dataset Configuration
-
-```bash
-# For Ultralytics YOLO
-python scripts/dataset_pipeline_builder.py data/final/ \
-    --generate-config yolo \
-    --output data.yaml
-
-# For Detectron2
-python scripts/dataset_pipeline_builder.py data/final/ \
-    --generate-config detectron2 \
-    --output detectron2_config.py
-```
-
-## Architecture Selection Guide
-
-### Object Detection Architectures
-
-| Architecture | Speed | Accuracy | Best For |
-|--------------|-------|----------|----------|
-| YOLOv8n | 1.2ms | 37.3 mAP | Edge, mobile, real-time |
-| YOLOv8s | 2.1ms | 44.9 mAP | Balanced speed/accuracy |
-| YOLOv8m | 4.2ms | 50.2 mAP | General purpose |
-| YOLOv8l | 6.8ms | 52.9 mAP | High accuracy |
-| YOLOv8x | 10.1ms | 53.9 mAP | Maximum accuracy |
-| RT-DETR-L | 5.3ms | 53.0 mAP | Transformer, no NMS |
-| Faster R-CNN R50 | 46ms | 40.2 mAP | Two-stage, high quality |
-| DINO-4scale | 85ms | 49.0 mAP | SOTA transformer |
-
-### Segmentation Architectures
-
-| Architecture | Type | Speed | Best For |
-|--------------|------|-------|----------|
-| YOLOv8-seg | Instance | 4.5ms | Real-time instance seg |
-| Mask R-CNN | Instance | 67ms | High-quality masks |
-| SAM | Promptable | 50ms | Zero-shot segmentation |
-| DeepLabV3+ | Semantic | 25ms | Scene parsing |
-| SegFormer | Semantic | 15ms | Efficient semantic seg |
-
-### CNN vs Vision Transformer Trade-offs
-
-| Aspect | CNN (YOLO, R-CNN) | ViT (DETR, DINO) |
-|--------|-------------------|------------------|
-| Training data needed | 1K-10K images | 10K-100K+ images |
-| Training time | Fast | Slow (needs more epochs) |
-| Inference speed | Faster | Slower |
-| Small objects | Good with FPN | Needs multi-scale |
-| Global context | Limited | Excellent |
-| Positional encoding | Implicit | Explicit |
+---
 
 ## Reference Documentation
-→ See references/reference-docs-and-commands.md for details
 
-## Performance Targets
-
-| Metric | Real-time | High Accuracy | Edge |
-|--------|-----------|---------------|------|
-| FPS | >30 | >10 | >15 |
-| mAP@50 | >0.6 | >0.8 | >0.5 |
-| Latency P99 | <50ms | <150ms | <100ms |
-| GPU Memory | <4GB | <8GB | <2GB |
-| Model Size | <50MB | <200MB | <20MB |
+- [Computer Vision Architectures](references/computer_vision_architectures.md)
+- [Object Detection Optimization](references/object_detection_optimization.md)
+- [Config Reference](references/yolo_config_reference.md)
 
 ## Resources
-
-- **Architecture Guide**: `references/computer_vision_architectures.md`
-- **Optimization Guide**: `references/object_detection_optimization.md`
-- **Deployment Guide**: `references/production_vision_systems.md`
-- **Scripts**: `scripts/` directory for automation tools
+- **Trainer Script**: `scripts/vision_model_trainer.py`
+- **Dataset Tool**: `scripts/dataset_pipeline_builder.py`
+- **Optimizer**: `scripts/inference_optimizer.py`

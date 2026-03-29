@@ -119,16 +119,6 @@ def create_ui(handler):
                 mem_detail = gr.TextArea(label="📖 摘要完整內容（點選後貼上 Session Key 查詢）", lines=10, interactive=False)
                 mem_key_inspect = gr.Textbox(label="查詢 Session Key（輸入後按 Enter）")
 
-            # --- TAB 4: Skill Editor ---
-            with gr.Tab("🛠️ Skill Editor"):
-                with gr.Row():
-                    with gr.Column(scale=1):
-                        skill_list = gr.Dropdown(label="Select Skill", choices=[s.name for s in handler.skill_repo.get_all_skills()])
-                        refresh_skills_btn = gr.Button("🔄 Refresh List")
-                        skill_file_list = gr.Dropdown(label="Select File")
-                        save_skill_btn = gr.Button("💾 Save File", variant="primary")
-                    with gr.Column(scale=3):
-                        skill_editor = gr.Code(label="File Editor", language="markdown", lines=25)
 
         # --- Events ---
         # apply_preset_btn.click(apply_preset, inputs=[session_key_preset], outputs=[session_key_input])
@@ -136,8 +126,6 @@ def create_ui(handler):
         refresh_models_btn.click(handler.refresh_models, inputs=[provider_radio, api_url_input], outputs=[model_dropdown])
         refresh_asr_models_btn.click(handler.refresh_asr_models, inputs=[asr_url_input], outputs=[asr_model_dropdown])
         
-        # Skill Editor refresh
-        refresh_skills_btn.click(handler.refresh_skills_list, outputs=[skill_list])
         
         # --- Execution Logic ---
         execution_inputs = [
@@ -194,18 +182,6 @@ def create_ui(handler):
         # Auto-load memories on tab render
         demo.load(handler.list_memories, outputs=mem_table)
 
-        # --- Skill Editor Events ---
-        skill_list.change(handler.on_skill_select, inputs=[skill_list], outputs=[skill_file_list, skill_editor])
-        
-        def load_file_content(skill_name, file_name):
-            if not skill_name or not file_name:
-                return ""
-            return handler.skill_repo.get_skill_details(skill_name, file_name) or ""
-        
-        skill_file_list.change(load_file_content, inputs=[skill_list, skill_file_list], outputs=[skill_editor])
-        
-        save_status = gr.Textbox(label="Save Status", visible=True)
-        save_skill_btn.click(handler.save_skill_content, inputs=[skill_list, skill_file_list, skill_editor], outputs=[save_status])
         
         # --- Token Usage Auto-Update & Session Switching ---
         usage_inputs = [session_dropdown, provider_radio, api_url_input, model_dropdown]

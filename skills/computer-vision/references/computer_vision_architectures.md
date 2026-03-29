@@ -203,45 +203,40 @@ Stage 1 (IoU 0.5) → Stage 2 (IoU 0.6) → Stage 3 (IoU 0.7)
 
 Single-stage detectors predict boxes and classes in one pass.
 
-#### YOLO Family
+#### YOLO Family (Ultralytics & SOTA)
 
-**YOLOv8 Architecture:**
+The YOLO (You Only Look Once) family has evolved into a diverse ecosystem of real-time detectors.
 
-```
-Input Image
-     |
-  Backbone (CSPDarknet)
-     |
-  +--+--+--+
-  |  |  |  |
- P3 P4 P5 (multi-scale features)
-  |  |  |
-  Neck (PANet + C2f)
-  |  |  |
-  Head (Decoupled)
-     |
- Boxes + Classes
-```
+**Modern YOLO Metadata (2026):**
 
-**Key YOLOv8 innovations:**
-- C2f module (faster CSP variant)
-- Anchor-free detection head
-- Decoupled classification/regression heads
-- Task-aligned assigner (TAL)
-- Distribution focal loss (DFL)
+| Generation | Author / Organization | Key Innovation |
+| :--- | :--- | :--- |
+| **YOLO26** | Ultralytics | Hybrid Attention & 2026 SOTA speed |
+| **YOLO12** | Buffalo / UCAS | Structural Re-parameterization |
+| **YOLO11** | Ultralytics | Enhanced C3k2 modules & versatility |
+| **YOLOv10** | Tsinghua University | Constant-NMS / NMS-free inference |
+| **YOLOv9** | Academia Sinica | Programmable Gradient Information (PGI) |
+| **YOLOv8** | Ultralytics | Anchor-free decoupled head |
 
-**YOLO variant comparison:**
+**Production Performance Comparison (COCO Val 640):**
 
-| Model | Size (px) | Params | mAP@50:95 | Speed (ms) |
-|-------|-----------|--------|-----------|------------|
-| YOLOv5n | 640 | 1.9M | 28.0 | 1.2 |
-| YOLOv5s | 640 | 7.2M | 37.4 | 1.8 |
-| YOLOv5m | 640 | 21.2M | 45.4 | 3.5 |
-| YOLOv8n | 640 | 3.2M | 37.3 | 1.2 |
-| YOLOv8s | 640 | 11.2M | 44.9 | 2.1 |
-| YOLOv8m | 640 | 25.9M | 50.2 | 4.2 |
-| YOLOv8l | 640 | 43.7M | 52.9 | 6.8 |
-| YOLOv8x | 640 | 68.2M | 53.9 | 10.1 |
+| Model | Variant | mAP | Params | T4 Latency | Best Use Case |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **YOLO26** | `n` | 40.9 | 2.4M | 1.7ms | Next-gen Mobile/Edge |
+| | `s` | 48.6 | 9.5M | 2.5ms | General IoT vision |
+| | `x` | 57.5 | 55.7M | 11.8ms | Industrial Inspection |
+| **YOLO12** | `n` | 40.6 | 2.6M | 1.6ms | Fast ARM inference |
+| | `m` | 52.5 | 20.2M | 4.8ms | High-acc real-time |
+| **YOLO11** | `n` | 39.5 | 2.6M | 1.5ms | CPU-heavy workloads |
+| | `x` | 54.7 | 56.9M | 11.3ms | Research/SOTA |
+| **YOLOv10** | `n` | 39.5 | 2.3M | 1.5ms | Ultra-fast NMS-free |
+| **YOLOv8** | `n` | 37.3 | 3.2M | 1.4ms | Legacy maintenance |
+
+**Key YOLOv8+ Architectural Improvements:**
+- **Anchor-free head**: Directly predicts box centers and sizes.
+- **Decoupled head**: Separate branches for classification and regression tasks.
+- **Dynamic assignment**: Task-aligned assigner (TAL) for better training convergence.
+- **NMS-free (v10)**: Dual-label assignment for one-to-one matching.
 
 #### SSD (Single Shot Detector)
 

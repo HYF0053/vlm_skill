@@ -50,7 +50,9 @@ if __name__ == "__main__":
 
     # Expose standard env vars for skill scripts
     os.environ["PROJECT_ROOT"] = PROJECT_ROOT
+    results_dir = os.path.join(PROJECT_ROOT, "results")
     tmp_dir = os.path.join(PROJECT_ROOT, "tmp")
+    os.environ["RESULTS_DIR"] = results_dir
     os.environ["TMPDIR"] = tmp_dir
     os.environ["TEMP"]   = tmp_dir
     os.environ["TMP"]    = tmp_dir

@@ -106,22 +106,8 @@ class UIHandler:
             )
             base_system_prompt = (system_prompt or "") + current_time_info + structured_context + conflict_rule
 
-            # Replicate the middleware's addendum logic for UI transparency
-            skills_addendum = (
-                "\n\n"
-                "================================================================\n"
-                "KNOWLEDGE SKILL LIBRARY (READ-ONLY REFERENCE — NOT CALLABLE)\n"
-                "================================================================\n"
-                f"{mw.skills_prompt}\n\n"
-                "----------------------------------------------------------------\n"
-                "CALLABLE TOOLS (all tools you may invoke directly):\n"
-                "  - load_skill_overview(skill_name)\n"
-                "  - read_skill_file(skill_name, file_path)\n"
-                "  - execute_script(skill_name, script_path, script_args)\n"
-                "  - run_cli_command(command, working_directory)\n"
-                "  - run_python_code(code, working_directory)\n"
-                "================================================================"
-            )
+            # Use the middleware's unified addendum logic for UI transparency
+            skills_addendum = mw.get_skills_addendum()
             final_system_prompt = base_system_prompt + skills_addendum
 
             # Calculate current usage breakdown (Estimated)
@@ -130,6 +116,10 @@ class UIHandler:
             
             input_prompt = get_token_estimate(len(query), cpt)
             input_context = get_token_estimate(len(final_system_prompt), cpt)
+            
+            # Inject dynamic token limits for this model (Paths are already global via app.py)
+            os.environ["MAX_MODEL_LEN"] = str(ctx_len or 4096)
+            os.environ["CHARS_PER_TOKEN"] = str(memory_params.get("chars_per_token", 1.8) if memory_params else 1.8)
             
             # 取代 LangGraph checkpointer 的殘留狀態，改為使用我們自訂的 Smart Trimmed History
             try:
@@ -200,6 +190,9 @@ class UIHandler:
             os.environ["VLLM_MODEL"]    = model_name
             os.environ["VLLM_API_KEY"]  = "ollama" if provider == "Ollama" else "EMPTY"
             os.environ["SESSION_ID"]    = session_key
+            if memory_params:
+                os.environ["MAX_MODEL_LEN"] = str(memory_params["max_model_len"])
+                os.environ["CHARS_PER_TOKEN"] = str(memory_params["chars_per_token"])
             if asr_url:
                 os.environ["ASR_API_URL"] = asr_url.rstrip("/")
             if asr_model:
