@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>vlm_skill System Sequence Diagram</title>
+    <!-- 引入 Mermaid.js -->
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <style>
+        body {
+            font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f5f7;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        h1 {
+            color: #333;
+        }
+        .diagram-container {
+            background-color: white;
+            border-radius: 10px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            padding: 30px;
+            margin-top: 20px;
+            width: 90%;
+            max-width: 1200px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>系統邏輯時序圖 (System Sequence Diagram)</h1>
+    <p>以下圖表會以前端動態方式渲染，呈現類似 Visio 專業繪圖工具的方塊與箭頭時序視覺效果。</p>
+    
+    <div class="diagram-container">
+        <div class="mermaid">
+        %%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#333333', 'primaryBorderColor': '#1976D2', 'lineColor': '#1976D2', 'secondaryColor': '#E3F2FD', 'tertiaryColor': '#F5F5F5' }}}%%
+        sequenceDiagram
+            autonumber
+            
+            actor User as 🧑‍💻 使用者
+            participant UI as 🎨 Gradio UI (app.py)
+            participant Core as 🧠 LangGraph Agent
+            participant Mem as 🗄️ Memory V2 (Qdrant)
+            participant Skill as 🛠️ Skill System (Router)
+            participant FS as 📁 檔案系統 (/results, /tmp)
+            participant LLM as 🤖 LLM Engine
+
+            %% 1. 初始化與請求接收
+            User->>UI: 上傳圖檔/對話輸入
+            UI->>Core: 觸發 Agent 執行 (傳遞 Thread ID 與 State)
+            
+            rect rgb(232, 244, 255)
+            Note over Core, Mem: 階段一：長時間記憶檢索 (Two-Pass Search)
+            Core->>Mem: 1. Metadata/Tag 初篩過濾 (Filter)
+            Mem-->>Core: 縮小候選範圍
+            Core->>Mem: 2. 語意向量搜尋 (Semantic Search)
+            Mem-->>Core: 載入專案背景與使用者偏好 (all_entities)
+            end
+            
+            %% 2. 思考與工具呼叫
+            rect rgb(255, 249, 230)
+            Note over Core, LLM: 階段二：LLM 思考與決策 (Skill-First)
+            Core->>LLM: 提交 Context (包含 Short-term & Memory)
+            LLM-->>Core: 回傳 Action (呼叫 Skill 工具)
+            
+            Core->>Skill: 解析工具請求 (如：computer-vision)
+            
+            %% 技能執行階段
+            Skill->>FS: 將暫存檔 (如圖片) 寫入 /tmp
+            Skill->>Skill: 執行 YOLO 推論/訓練模型
+            Skill->>FS: 將日誌與模型寫出至 /results
+            FS-->>Skill: 回傳檔案存檔路徑
+            Skill-->>Core: 回傳工具執行結果 (Tool Output)
+            end
+            
+            %% 3. Token 防死結與截斷
+            rect rgb(255, 235, 238)
+            Note over Core, LLM: 階段三：智慧截斷與防護 (Smart Trimming)
+            Core->>Core: 計算 Token 使用量是否達安全上限
+            alt Token 逼近上限或偵測到無限迴圈
+                Core->>Core: 強制截斷 (Model-Aware Truncation)
+                Core->>LLM: 請求提供當前執行狀態小結
+                LLM-->>Core: 產出摘要並中斷工作流
+            else 正常執行
+                Core->>LLM: 將工具結果納入對話，請求最終回應
+                LLM-->>Core: 產出最終回覆內容
+            end
+            end
+            
+            %% 4. 記憶更新與結果輸出
+            rect rgb(232, 245, 233)
+            Note over Core, User: 階段四：狀態持久化與回覆
+            Core->>Mem: 透過 upsert_memory 更新重要狀態
+            Core-->>UI: 串流 (Streaming) 輸出文字與結果
+            UI-->>User: 畫面更新 (包含 /results 中的連結)
+            end
+        </div>
+    </div>
+
+    <script>
+        mermaid.initialize({ startOnLoad: true });
+    </script>
+</body>
+</html>

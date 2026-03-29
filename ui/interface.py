@@ -10,17 +10,21 @@ def create_ui(handler):
             with gr.Tab("🤖 Agent"):
                 with gr.Group():
                     gr.Markdown("### 🔑 Session Management")
-                    initial_choices = handler.memory_store.list_session_keys() or ["main"]
-                    if not handler.memory_store.list_session_keys():
-                        from core.memory import ThreadMemory
-                        handler.memory_store.save_thread(ThreadMemory(session_key="main"))
 
-                    initial_session = initial_choices[0]
+                    # Ensure at least one session exists
+                    if not handler.memory_store.list_threads():
+                        from core.memory import ThreadMemory
+                        handler.memory_store.save_thread(ThreadMemory(
+                            session_key=handler.memory_store.get_next_session_name(),
+                        ))
+
+                    initial_keys    = handler.memory_store.list_session_keys()
+                    initial_session = initial_keys[0] if initial_keys else ""
 
                     with gr.Row():
                         session_dropdown = gr.Dropdown(
                             label="Select Session", 
-                            choices=initial_choices, 
+                            choices=initial_keys, 
                             value=initial_session,
                             scale=4,
                             interactive=True,
@@ -45,7 +49,6 @@ def create_ui(handler):
                             "CRITICAL TOOL EXECUTION RULE:\n"
                             "- You MUST NOT pretend to have performed an action (e.g., 'I have saved your preference') unless you are providing the actual tool call in the same response.\n"
                             "- Verbal confirmation should only be given AFTER or ALONGSIDE the tool call markup.\n\n"
-                            "CRITICAL MEMORY RULE: 你具備「主動反思」的核心動能。在每一輪對話中，請主動捕捉具備長期價值的『新事實、用戶偏好或決策摘要』，並主動調用對應的「技能 (Skill)」進行結構化儲存。請務必在確實執行成功後，才在回覆中宣告已完成儲存，確保你的回覆精確反映實際操作。\n\n"
                             "When using skills and answering questions, please follow this retrieval priority order:\n"
                             "1. Current Context (Short-term): If the information is within the current conversation window, answer directly.\n"
                             "2. Memory (Personal/Project Knowledge):\n"
@@ -89,7 +92,7 @@ def create_ui(handler):
                         model_dropdown = gr.Dropdown(label="Select Model", choices=[], interactive=True, allow_custom_value=True)
                     with gr.Column():
                         image_max_size_slider = gr.Slider(512, 4096, value=1024, step=512, label="Max Image Dimension")
-                        max_agent_steps_slider = gr.Slider(5, 50, value=15, step=1, label="Max Agent Steps")
+                        max_agent_steps_slider = gr.Slider(5, 100, value=30, step=1, label="Max Agent Steps")
                         asr_url_input = gr.Textbox(label="🎙️ ASR API URL", value="http://localhost:8000", placeholder="http://<host>:<port>")
                         refresh_asr_models_btn = gr.Button("🔄 Refresh ASR Models")
                         asr_model_dropdown = gr.Dropdown(label="🎙️ ASR Model (現在可用模型)", choices=[], interactive=True, allow_custom_value=True)
@@ -116,16 +119,6 @@ def create_ui(handler):
                 mem_detail = gr.TextArea(label="📖 摘要完整內容（點選後貼上 Session Key 查詢）", lines=10, interactive=False)
                 mem_key_inspect = gr.Textbox(label="查詢 Session Key（輸入後按 Enter）")
 
-            # --- TAB 4: Skill Editor ---
-            with gr.Tab("🛠️ Skill Editor"):
-                with gr.Row():
-                    with gr.Column(scale=1):
-                        skill_list = gr.Dropdown(label="Select Skill", choices=[s.name for s in handler.skill_repo.get_all_skills()])
-                        refresh_skills_btn = gr.Button("🔄 Refresh List")
-                        skill_file_list = gr.Dropdown(label="Select File")
-                        save_skill_btn = gr.Button("💾 Save File", variant="primary")
-                    with gr.Column(scale=3):
-                        skill_editor = gr.Code(label="File Editor", language="markdown", lines=25)
 
         # --- Events ---
         # apply_preset_btn.click(apply_preset, inputs=[session_key_preset], outputs=[session_key_input])
@@ -133,8 +126,6 @@ def create_ui(handler):
         refresh_models_btn.click(handler.refresh_models, inputs=[provider_radio, api_url_input], outputs=[model_dropdown])
         refresh_asr_models_btn.click(handler.refresh_asr_models, inputs=[asr_url_input], outputs=[asr_model_dropdown])
         
-        # Skill Editor refresh
-        refresh_skills_btn.click(handler.refresh_skills_list, outputs=[skill_list])
         
         # --- Execution Logic ---
         execution_inputs = [
@@ -177,28 +168,20 @@ def create_ui(handler):
         refresh_mem_btn.click(handler.list_memories, outputs=mem_table)
         mem_key_inspect.submit(handler.inspect_memory, inputs=mem_key_inspect, outputs=mem_detail)
         
-        def delete_and_refresh(key):
-            msg = handler.delete_memory(key)
+        def delete_and_refresh(key, provider, api_url, model_name):
+            msg = handler.delete_memory(key, provider=provider, api_url=api_url, model_name=model_name)
             table = handler.list_memories()
             return msg, table
         
-        delete_mem_btn.click(delete_and_refresh, inputs=mem_key_to_delete, outputs=[mem_status, mem_table])
+        delete_mem_btn.click(
+            delete_and_refresh,
+            inputs=[mem_key_to_delete, provider_radio, api_url_input, model_dropdown],
+            outputs=[mem_status, mem_table]
+        )
         
         # Auto-load memories on tab render
         demo.load(handler.list_memories, outputs=mem_table)
 
-        # --- Skill Editor Events ---
-        skill_list.change(handler.on_skill_select, inputs=[skill_list], outputs=[skill_file_list, skill_editor])
-        
-        def load_file_content(skill_name, file_name):
-            if not skill_name or not file_name:
-                return ""
-            return handler.skill_repo.get_skill_details(skill_name, file_name) or ""
-        
-        skill_file_list.change(load_file_content, inputs=[skill_list, skill_file_list], outputs=[skill_editor])
-        
-        save_status = gr.Textbox(label="Save Status", visible=True)
-        save_skill_btn.click(handler.save_skill_content, inputs=[skill_list, skill_file_list, skill_editor], outputs=[save_status])
         
         # --- Token Usage Auto-Update & Session Switching ---
         usage_inputs = [session_dropdown, provider_radio, api_url_input, model_dropdown]
@@ -215,6 +198,10 @@ def create_ui(handler):
         
         # For buttons, we only update the dropdown value, which then triggers .change() automatically
         add_session_btn.click(handler.on_add_session_simple, outputs=[session_dropdown])
-        delete_session_btn.click(handler.on_delete_session_simple, inputs=[session_dropdown], outputs=[session_dropdown, chatbot])
+        delete_session_btn.click(
+            handler.on_delete_session_simple,
+            inputs=[session_dropdown, provider_radio, api_url_input, model_dropdown],
+            outputs=[session_dropdown, chatbot]
+        )
 
     return demo

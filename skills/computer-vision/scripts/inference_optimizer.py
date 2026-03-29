@@ -296,10 +296,15 @@ class InferenceOptimizer:
         try:
             import torch
             import numpy as np
+            
+            try:
+                import ultralytics
+            except ImportError:
+                pass
 
             # Load model
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-            checkpoint = torch.load(str(self.model_path), map_location=device)
+            checkpoint = torch.load(str(self.model_path), map_location=device, weights_only=False)
 
             # Handle different checkpoint formats
             if isinstance(checkpoint, dict) and 'model' in checkpoint:
@@ -311,13 +316,20 @@ class InferenceOptimizer:
 
             model.to(device)
             model.train(False)
+            
+            # PyTorch CPU doesn't fully support FP16 convolutions. If on CPU, force FP32.
+            if device.type == 'cpu':
+                model.float()
+                
+            model_dtype = next(model.parameters()).dtype
 
             results = {'device': str(device)}
             batch_results = []
 
             with torch.no_grad():
                 for batch_size in batch_sizes:
-                    dummy = torch.randn(batch_size, 3, *input_size, device=device)
+                    # Match dummy data dtype to the model's dtype (e.g. FP16 on GPU)
+                    dummy = torch.randn(batch_size, 3, *input_size, device=device, dtype=model_dtype)
 
                     # Warmup
                     for _ in range(warmup):
@@ -355,6 +367,7 @@ class InferenceOptimizer:
         except ImportError:
             return {'error': 'torch not installed'}
         except Exception as e:
+            logger.error(f"PyTorch benchmark error: {e}")
             return {'error': str(e)}
 
     def get_optimization_recommendations(self, target: str = 'gpu') -> List[Dict[str, Any]]:
@@ -452,7 +465,12 @@ class InferenceOptimizer:
             if 'num_nodes' in self.model_info:
                 print(f"Nodes:       {self.model_info['num_nodes']}")
 
-        if self.benchmark_results and 'batch_results' in self.benchmark_results:
+        if self.benchmark_results and 'error' in self.benchmark_results:
+            print("\n" + "-" * 70)
+            print("BENCHMARK ERROR")
+            print("-" * 70)
+            print(self.benchmark_results['error'])
+        elif self.benchmark_results and 'batch_results' in self.benchmark_results:
             print("\n" + "-" * 70)
             print("BENCHMARK RESULTS")
             print("-" * 70)

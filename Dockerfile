@@ -38,6 +38,9 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Disable the 'yolo' CLI to enforce Python-API usage
+RUN echo 'alias yolo="echo '\''CLI 已禁用, 請使用 Python 腳本 (create_config.py/vision_model_trainer.py)'\''"' >> /etc/bash.bashrc
+
 # Expose ports for connecting to the model or UI services
 # 7860 is for Gradio, and 63574 was identified as a web service port
 EXPOSE 7860

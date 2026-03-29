@@ -164,11 +164,40 @@ def _create_tools_for_repo(repo: SkillRepository):
                     except Exception: pass
             
             print("-" * 60, flush=True)
-            return "".join(full_output), process.poll()
+            output_str = "".join(full_output)
+            exit_code = process.poll()
+
+            # --- Smart Truncation Logic (Model-Aware) ---
+            max_model_len = int(os.environ.get("MAX_MODEL_LEN", 4096))
+            chars_per_token = float(os.environ.get("CHARS_PER_TOKEN", 1.8))
+            
+            # Allow one tool output to occupy up to 15% of the total context (at least 3000 chars, at most 30000)
+            max_allowed_chars = int(max_model_len * chars_per_token * 0.15)
+            max_allowed_chars = max(3000, min(30000, max_allowed_chars))
+
+            if len(output_str) > max_allowed_chars:
+                # 1. Save full log to file for recovery/reference
+                log_filename = f"tool_output_{uuid.uuid4().hex[:8]}.log"
+                log_path = os.path.join(log_dir, log_filename)
+                with open(log_path, "w", encoding="utf-8") as f:
+                    f.write(output_str)
+                
+                # 2. Perform Head-Tail Average Truncation
+                keep_side = max_allowed_chars // 2
+                head = output_str[:keep_side]
+                tail = output_str[-keep_side:]
+                trunc_msg = f"\n\n... [TRUNCATED DUE TO TOKEN LIMIT: {len(output_str)} chars total. Full log saved to: {log_path}] ...\n\n"
+                
+                output_str = head + trunc_msg + tail
+
+            return output_str, exit_code
         except Exception as e:
             err_msg = f"Process failure: {e}"
             with open(live_log_path, "a", encoding="utf-8") as f: f.write(f"\n❌ {err_msg}")
             return err_msg, -1
+
+    # Auto-indexing of results/ and tmp/ is now handled by core/file_watcher.py
+    # (FileWatcher daemon started in app.py — no snapshot diffing needed here)
 
     @tool
     def execute_script(skill_name: str, script_path: str, script_args: str = "") -> str:
@@ -178,13 +207,12 @@ def _create_tools_for_repo(repo: SkillRepository):
         abs_script = os.path.normpath(os.path.join(skill.path, script_path))
         if not abs_script.startswith(os.path.abspath(skill.path)) or not os.path.isfile(abs_script):
             return "Invalid script path."
-        
-        # Use -u for unbuffered python output
+
         cmd = [sys.executable, "-u", abs_script] + shlex.split(script_args)
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
         env["PYTHONUNBUFFERED"] = "1"
-        
+
         output, code = _run_process_realtime(cmd, skill.path, env)
         return f"[stdout/stderr]\n{output}\n[exit code] {code}"
 
@@ -195,7 +223,7 @@ def _create_tools_for_repo(repo: SkillRepository):
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
         env["PYTHONUNBUFFERED"] = "1"
-        
+
         output, code = _run_process_realtime(command, cwd, env)
         return f"[stdout/stderr]\n{output}\n[exit code] {code}"
 
@@ -216,8 +244,9 @@ def _create_tools_for_repo(repo: SkillRepository):
         except Exception as e: return f"Error: {e}"
         finally:
             if os.path.exists(tmp_path): os.remove(tmp_path)
-    
+
     return [load_skill_overview, read_skill_file, execute_script, run_cli_command, run_python_code]
+
 
 def create_skill_tools(repo: SkillRepository, memory_store: Any = None, session_key: str = "main"):
     """
@@ -274,31 +303,43 @@ class SkillMiddleware(AgentMiddleware):
             skills_list.append(skill_entry)
         self.skills_prompt = "\n\n".join(skills_list) if skills_list else "No skills available."
 
-    def wrap_model_call(self, request: ModelRequest, handler: Callable[[ModelRequest], ModelResponse]) -> ModelResponse:
-        # 1. Build Skill Library Documentation
-        skills_addendum = (
+    def get_skills_addendum(self) -> str:
+        """Returns the dynamic skills addendum containing the protocol and library."""
+        return (
             "\n\n"
             "================================================================\n"
-            "KNOWLEDGE SKILL LIBRARY (READ-ONLY REFERENCE — NOT CALLABLE)\n"
+            "⚠️ GENERAL SKILL-FIRST PROTOCOL (DECOUPLED)\n"
             "================================================================\n"
-            "The following are skill LOOKUP KEYS, NOT tools or functions.\n"
-            "You MUST NOT call them directly. They do not exist as callable tools.\n\n"
+            "The system is modular. Capabilities are provided via 'Skills' listed below.\n\n"
+            "MANDATORY SEARCH-FIRST RULE:\n"
+            "  - BEFORE writing code or running CLI commands, scan the 'KNOWLEDGE SKILL LIBRARY'.\n"
+            "  - If any skill's 'Purpose' matches your current intent (e.g. Training, ASR, PDF):\n"
+            "    1. You MUST call load_skill_overview(skill_name) to inspect its scripts.\n"
+            "    2. You MUST prioritize `execute_script(...)` over writing raw logic manually.\n"
+            "    3. VIOLATION: Using raw CLI/Python for tasks covered by a Skill results in \n"
+            "       misconfigured environments and log overflows.\n\n"
+            "TOOL PREFERENCE ORDER:\n"
+            "  Priority 1: Specialized Skill Scripts (`execute_script`)\n"
+            "  Priority 2: Common CLI/Python (`run_cli_command`, `run_python_code`)\n"
+            "              (Use ONLY for one-off system tasks or if NO skill matches.)\n"
+            "\n"
+            "FILE PATH ANCHOR RULE (CRITICAL):\n"
+            "  1. NO SCATTERING: NEVER save files directly in the root or skill folders.\n"
+            "  2. PERSISTENT: All experiment results/logs MUST go to the absolute path \n"
+            "     stored in `os.environ['RESULTS_DIR']` (or `./results/` as fallback).\n"
+            "  3. TEMPORARY: All temporary files MUST go to `os.environ['TMP_DIR']`.\n"
+            "  4. SKILL HINT: When calling `execute_script`, the CWD is the skill root.\n"
+            "     Check the code or load_skill_overview to see if it reads PROJECT_ROOT.\n"
+            "================================================================\n"
+            "KNOWLEDGE SKILL LIBRARY (DYNAMIC LOOKUP KEYS)\n"
+            "================================================================\n"
             f"{self.skills_prompt}\n\n"
             "----------------------------------------------------------------\n"
             "HOW TO USE A SKILL (mandatory workflow):\n"
-            "  Step 1: Call load_skill_overview(skill_name=\"<skill key above>\")\n"
-            "  Step 2: Read the overview, then call read_skill_file(...) if needed\n"
-            "  Step 3: Apply the skill instructions yourself, OR\n"
-            "          run a helper script with execute_script(...), OR\n"
-            "          run a CLI command with run_cli_command(...)\n\n"
-            "CRITICAL BEHAVIORAL RULE:\n"
-            "  - You are stateless between sessions. You CANNOT 'remember' anything just by saying 'I will remember this'.\n"
-            "  - If the user states a rule, preference, habit, or project fact, you MUST IMMEDIATELY use `execute_script` to save it via the memory or rag skill.\n"
-            "  - DO NOT say 'Okay, I will answer shortly' without ACTUALLY running the script to save the rule.\n"
-            "  - FILE PATH RULE (CRUCIAL): \n"
-            "    1. When calling `execute_script`, the working directory is `skills/<skill_name>/`. To save output correctly to the global results folder, YOU MUST prepend `../../results/` to output arguments. Example: `execute_script('pdf', 'scripts/convert.py', 'doc.pdf ../../results/output.png')`.\n"
-            "    2. When writing Python code or CLI commands, output them to `./results/` and temporary data to `./tmp/` since the default working directory is the project root.\n"
-            "    3. NEVER save files inside the `skills/` directories or project root arbitrarily.\n\n"
+            "  Step 1: Compare task with 'Purpose' descriptions above.\n"
+            "  Step 2: Call load_skill_overview(skill_name=\"<key>\") to see dedicated scripts.\n"
+            "  Step 3: Call execute_script(skill_name, script_path, args) for high-level tasks.\n\n"
+            "----------------------------------------------------------------\n"
             "CALLABLE TOOLS (all tools you may invoke directly):\n"
             "  - load_skill_overview(skill_name: str) -> str\n"
             "  - read_skill_file(skill_name: str, file_path: str) -> str\n"
@@ -317,18 +358,20 @@ class SkillMiddleware(AgentMiddleware):
             "  Example: 'C:/Users/name/document.pdf' instead of 'C:\\Users\\name\\document.pdf'\n"
             "================================================================"
         )
+
+    def wrap_model_call(self, request: ModelRequest, handler: Callable[[ModelRequest], ModelResponse]) -> ModelResponse:
+        # 1. Build Skill Library Documentation
+        skills_addendum = self.get_skills_addendum()
         
         # 2. Add Structured Memory if available (Delegated to memory skill logic)
         memory_addendum = ""
         if self.memory_store:
             try:
-                # Dynamically delegate formatting to the memory skill if it exists
-                from skills.memory.lib.logic import format_memory_for_prompt
+                from core.memory import format_memory_for_prompt
                 mem = self.memory_store.load_thread(self.session_key)
                 memory_addendum = format_memory_for_prompt(mem)
-            except (ImportError, ModuleNotFoundError):
-                # Fallback if the skill's logic is missing
-                memory_addendum = "\n\n(Memory system logic unavailable.)\n"
+            except Exception:
+                memory_addendum = "\n\n(Memory system unavailable.)\n"
             
         import datetime
         current_time_info = (
@@ -336,16 +379,8 @@ class SkillMiddleware(AgentMiddleware):
             f"Current Date and Time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
             f"Day of the Week: {datetime.datetime.now().strftime('%A')}\n"
         )
-        
-        conflict_rule = (
-            "\n\n🚨 CRITICAL MEMORY RULE: The STRUCTURED MEMORY block above represents the ABSOLUTE TRUTH of the user's CURRENT status and preferences.\n"
-            "   - IF you want to update something that looks like an existing label (Pref/Rule/Profile) above, YOU MUST USE THE EXACT SAME LABEL to overwrite it.\n"
-            "   - DO NOT create redundant labels (e.g. if 'brand_preference' exists, do not create 'memory_preference').\n"
-            "   - If past conversation history contradicts the Structured Memory, you MUST IGNORE the history and STRICTLY OBEY the Structured Memory. "
-            "If a user's preference is ALREADY recorded or up-to-date in the Structured Memory, DO NOT call `upsert_memory` again for it."
-        )
             
         orig = request.system_message.content
-        new_content = orig + current_time_info + memory_addendum + conflict_rule + skills_addendum
+        new_content = orig + current_time_info + memory_addendum + skills_addendum
         
         return handler(request.override(system_message=SystemMessage(content=new_content)))

@@ -86,11 +86,11 @@ class UIHandler:
             
             # 2. Get the structured memory context (User Profile, Facts, etc.)
             try:
-                from skills.memory.lib.logic import format_memory_for_prompt
+                from core.memory import format_memory_for_prompt
                 mem = self.memory_store.load_thread(session_key)
                 structured_context = format_memory_for_prompt(mem)
-            except (ImportError, ModuleNotFoundError):
-                structured_context = "\n\n(Memory logic unavailable.)\n"
+            except Exception:
+                structured_context = "\n\n(Memory system unavailable.)\n"
             
             import datetime
             current_time_info = (
@@ -106,22 +106,8 @@ class UIHandler:
             )
             base_system_prompt = (system_prompt or "") + current_time_info + structured_context + conflict_rule
 
-            # Replicate the middleware's addendum logic for UI transparency
-            skills_addendum = (
-                "\n\n"
-                "================================================================\n"
-                "KNOWLEDGE SKILL LIBRARY (READ-ONLY REFERENCE — NOT CALLABLE)\n"
-                "================================================================\n"
-                f"{mw.skills_prompt}\n\n"
-                "----------------------------------------------------------------\n"
-                "CALLABLE TOOLS (all tools you may invoke directly):\n"
-                "  - load_skill_overview(skill_name)\n"
-                "  - read_skill_file(skill_name, file_path)\n"
-                "  - execute_script(skill_name, script_path, script_args)\n"
-                "  - run_cli_command(command, working_directory)\n"
-                "  - run_python_code(code, working_directory)\n"
-                "================================================================"
-            )
+            # Use the middleware's unified addendum logic for UI transparency
+            skills_addendum = mw.get_skills_addendum()
             final_system_prompt = base_system_prompt + skills_addendum
 
             # Calculate current usage breakdown (Estimated)
@@ -130,6 +116,10 @@ class UIHandler:
             
             input_prompt = get_token_estimate(len(query), cpt)
             input_context = get_token_estimate(len(final_system_prompt), cpt)
+            
+            # Inject dynamic token limits for this model (Paths are already global via app.py)
+            os.environ["MAX_MODEL_LEN"] = str(ctx_len or 4096)
+            os.environ["CHARS_PER_TOKEN"] = str(memory_params.get("chars_per_token", 1.8) if memory_params else 1.8)
             
             # 取代 LangGraph checkpointer 的殘留狀態，改為使用我們自訂的 Smart Trimmed History
             try:
@@ -200,6 +190,9 @@ class UIHandler:
             os.environ["VLLM_MODEL"]    = model_name
             os.environ["VLLM_API_KEY"]  = "ollama" if provider == "Ollama" else "EMPTY"
             os.environ["SESSION_ID"]    = session_key
+            if memory_params:
+                os.environ["MAX_MODEL_LEN"] = str(memory_params["max_model_len"])
+                os.environ["CHARS_PER_TOKEN"] = str(memory_params["chars_per_token"])
             if asr_url:
                 os.environ["ASR_API_URL"] = asr_url.rstrip("/")
             if asr_model:
@@ -260,13 +253,20 @@ class UIHandler:
 
             # Memory save
             final_answer = chatbot_history[-1][1]
-            
 
+            # ── Inline turn metadata extraction (zero LLM calls) ──────────────
+            try:
+                from core.turn_meta import extract_turn_meta
+                turn_meta = extract_turn_meta(query, final_answer)
+            except Exception as _tm_err:
+                turn_meta = None
+                print(f"[UIHandler] turn_meta extraction failed: {_tm_err}")
+            # ──────────────────────────────────────────────────────────────────
 
             try:
                 # 更新長期記憶
                 updated_mem = None
-                gen_mem = self.memory_store.record_turn(session_key, query, final_answer, attachments=current_attachments, usage=usage)
+                gen_mem = self.memory_store.record_turn(session_key, query, final_answer, attachments=current_attachments, usage=usage, turn_meta=turn_meta)
                 
                 try:
                     while True:
@@ -335,19 +335,15 @@ class UIHandler:
             return [["(尚無記憶)", "-", "-", "-", "-"]]
         rows = []
         for t in threads:
-            # Create a preview from preferences if available
-            preview = ""
-            if t.preferences:
-                preview = f"Prefs: {len(t.preferences)}"
-            else:
-                preview = "(無結構化資料)"
-                
+            msg_count    = len(t.recent_messages)
+            deleted_flag = "🗑️ 已刪除" if t.is_deleted else "✅ 使用中"
+            label        = t.display_name.strip() if t.display_name.strip() else t.session_key
             rows.append([
                 t.session_key,
                 str(t.turn_count),
-                str(len(t.preferences)),
+                str(msg_count),
                 t.last_updated_at[:16].replace("T", " "),
-                preview,
+                deleted_flag,
             ])
         return rows
 
@@ -356,38 +352,53 @@ class UIHandler:
         if not key:
             return "(請輸入 Session Key)"
         mem = self.memory_store.load_thread(key.strip())
-        if not mem.recent_messages and not mem.preferences:
+        if not mem.recent_messages and not mem.turn_count:
             return f"找不到 key='{key.strip()}' 的記憶，或該 key 尚無內容。"
-        
+
+        from core.memory import load_global_profile
+        profile = load_global_profile()
+
         lines = [
             f"🔑 Session Key: {mem.session_key}",
             f"📊 總輪數: {mem.turn_count}",
+            f"🗑️ 已刪除: {'是' if mem.is_deleted else '否'}",
             f"🕐 建立: {mem.created_at[:16]}　更新: {mem.last_updated_at[:16]}",
             "",
-            "─── 👤 用戶檔案 (User Profile) ───",
-            str(mem.user_profile) if mem.user_profile else "(無)",
+            "─── 👤 用戶檔案 (global_profile.json) ───",
+            str(profile.get('user_profile', {})) or "(無)",
             "",
-            "─── ⚙️ 用戶偏好 (Preferences) ───",
-            str(mem.preferences) if mem.preferences else "(無)",
+            "─── ⚙️ 用戶偏好 (global_profile.json) ───",
+            str(profile.get('preferences', {})) or "(無)",
             "",
-            "─── 📜 AI 行動準則 (Agent Rules) ───",
-            str(getattr(mem, 'agent_rules', {})) if getattr(mem, 'agent_rules', {}) else "(無)",
+            "─── 📜 AI 行動準則 (global_profile.json) ───",
+            str(profile.get('agent_rules', {})) or "(無)",
             "",
             "───  最近幾輪對話 ───",
         ]
         for m in mem.recent_messages[-6:]:
             role = "👤 使用者" if m.get("role") == "user" else "🤖 AI"
             content = m.get("content", "")
-            lines.append(f"{role}: {content[:200]}{'...' if len(content)>200 else ''}")
+            qdrant_tag = f" [Qdrant: {m.get('qdrant_collection','')} {m.get('qdrant_id','')[:8]}]" if m.get('qdrant_id') else ""
+            lines.append(f"{role}: {content[:200]}{'...' if len(content)>200 else ''}{qdrant_tag}")
         return "\n".join(lines)
 
-    def delete_memory(self, key):
-        """刪除特定 Session Key 的記憶"""
+    def delete_memory(self, key, provider=None, api_url=None, model_name=None):
+        """刪除特定 Session Key 的記憶，並觸發背景 archive 總結。"""
         if not key:
             return "請輸入要刪除的 Session Key。"
-        deleted = self.memory_store.delete_thread(key.strip())
+        llm = None
+        if provider and api_url and model_name:
+            try:
+                from langchain_openai import ChatOpenAI
+                base_url = api_url if api_url.endswith("/v1") else f"{api_url}/v1"
+                api_key  = "ollama" if provider == "Ollama" else "EMPTY"
+                llm = ChatOpenAI(model=model_name, api_key=api_key, base_url=base_url, temperature=0)
+            except Exception as e:
+                print(f"[delete_memory] LLM init failed: {e}")
+        deleted = self.memory_store.delete_thread(key.strip(), llm=llm)
         if deleted:
-            return f"✅ 已刪除 key='{key.strip()}' 的記憶。"
+            suffix = " (背景 archive 總結已啟動)" if llm else " (未提供 LLM，跳過 archive 總結)"
+            return f"✅ 已刪除 key='{key.strip()}' 的記憶。{suffix}"
         return f"⚠️ 找不到 key='{key.strip()}'，無需刪除。"
 
     def get_usage_status(self, session_key, provider, api_url, model_name):
@@ -430,16 +441,16 @@ class UIHandler:
             return [], f"錯誤: {e}"
 
     def on_add_session_simple(self):
-        """新增一個 Session 並由 dropdown.change 觸發後續"""
-        new_name = self.memory_store.get_next_session_name()
+        """建立新 Session（UUID key）"""
+        session_key = self.memory_store.get_next_session_name()
         from core.memory import ThreadMemory
-        self.memory_store.save_thread(ThreadMemory(session_key=new_name))
+        self.memory_store.save_thread(ThreadMemory(session_key=session_key))
         keys = self.memory_store.list_session_keys()
-        return gr.Dropdown(choices=keys, value=new_name)
+        return gr.Dropdown(choices=keys, value=session_key)
 
-    def on_delete_session_simple(self, session_key):
-        """刪除 Session（含磁碟記憶與 RAM checkpointer）並由 dropdown.change 觸發後續"""
-        # 清除 InMemorySaver 中該 session 的所有 RAM 對話記錄
+    def on_delete_session_simple(self, session_key, provider=None, api_url=None, model_name=None):
+        """刪除 Session（含磁碟記憶與 RAM checkpointer），觸發背景 archive 總結。"""
+        # Clear InMemorySaver RAM checkpoints
         try:
             cp = self.global_checkpointer
             if hasattr(cp, 'storage'):
@@ -452,17 +463,29 @@ class UIHandler:
                     del cp.writes[k]
         except Exception as e:
             print(f"[on_delete_session_simple] Checkpointer clear error: {e}")
+
         if not session_key:
-            return gr.Dropdown()
-        
-        self.memory_store.delete_thread(session_key)
+            choices = self.memory_store.list_session_choices()
+            return gr.Dropdown(choices=choices, value=choices[0][1] if choices else None), []
+
+        # Build LLM for archive summarization
+        llm = None
+        if provider and api_url and model_name:
+            try:
+                from langchain_openai import ChatOpenAI
+                base_url = api_url if api_url.endswith("/v1") else f"{api_url}/v1"
+                api_key  = "ollama" if provider == "Ollama" else "EMPTY"
+                llm = ChatOpenAI(model=model_name, api_key=api_key, base_url=base_url, temperature=0)
+            except Exception as e:
+                print(f"[on_delete_session_simple] LLM init failed: {e}")
+
+        self.memory_store.delete_thread(session_key, llm=llm)
+
         keys = self.memory_store.list_session_keys()
-        if not keys:
-            keys = ["main"]
-            from core.memory import ThreadMemory
-            self.memory_store.save_thread(ThreadMemory(session_key="main"))
-            
-        return gr.Dropdown(choices=keys, value=keys[0]), []
+        if keys:
+            return gr.Dropdown(choices=keys, value=keys[0]), []
+        else:
+            return gr.Dropdown(choices=[], value=None), []
 
     def _get_chatbot_history(self, session_key):
         """Helper: 將 MemoryStore 的格式轉為 Gradio Chatbot 格式 [[user, ai], ...]"""
