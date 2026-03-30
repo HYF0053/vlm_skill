@@ -39,17 +39,6 @@ class ThreadMemory:
     turn_count:        int = 0
     is_deleted:        bool = False
 
-    # Archive state machine: null | "pending" | "summarizing" | "done"
-    archive_state:     Optional[str] = None
-    archive_started_at: Optional[str] = None
-    archived_file:     Optional[str] = None        # relative path after rename
-    archived_chunks:   list = field(default_factory=list)
-    # Each entry: {
-    #   "chunk_index": int, "qdrant_point_id": str,
-    #   "turn_range": [start, end], "summary": str
-    # }
-    session_point_id:  Optional[str] = None        # Qdrant point ID for session-level summary
-
     recent_messages:   list = field(default_factory=list)
     tags:              list = field(default_factory=list)
     meta:              dict = field(default_factory=dict)
@@ -129,7 +118,22 @@ def _ensure_conv_collection(collection: str, cfg: dict) -> None:
         json={"vectors": {"size": vector_size, "distance": "Cosine"}},
         timeout=10,
     ).raise_for_status()
-    logger.info("Created Qdrant collection '%s'", collection)
+    
+    # Create Full-text payload indexes for BM25 hybrid search
+    for field in ["entities", "summary"]:
+        requests.put(
+            f"{base}/collections/{collection}/index",
+            json={
+                "field_name": field,
+                "field_schema": {
+                    "type": "text",
+                    "tokenizer": "word",
+                    "lowercase": True
+                }
+            },
+            timeout=10,
+        )
+    logger.info("Created Qdrant collection '%s' with text indexes", collection)
 
 
 def _upsert_conv_point(collection: str, point_id: str, vector: list,
@@ -147,406 +151,60 @@ def _strip_think(text: str) -> str:
     """Remove <think>...</think> blocks produced by reasoning models."""
     return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
-
-def _extract_tags(text: str) -> list[str]:
+def _upsert_single_turn_point(session_key: str, turn_meta: dict, user_msg: str, ai_msg: str, cfg: dict) -> str:
     """
-    Extract keyword tags from raw text without an LLM.
-    Strategy:
-      1. English capitalized words / acronyms (e.g. GPU, NVIDIA, RTX)
-      2. English technical terms 4+ chars (e.g. social, media)
-      3. CJK noun-ish phrases 2-4 chars (simple heuristic)
-    Returns up to 5 unique tags, shortest first.
+    Index a single turn into Qdrant. Returns the generated point ID.
     """
-    tags: list[str] = []
-    seen: set[str] = set()
-
-    # English: ALL-CAPS acronyms and Title-Case words 2+ chars
-    for m in re.finditer(r"\b([A-Z]{2,}|[A-Z][a-z]{3,})\b", text):
-        w = m.group(1)
-        if w.lower() not in {"user", "assistant", "think", "true", "false"}:
-            if w not in seen:
-                seen.add(w)
-                tags.append(w)
-
-    # CJK: 2-4 char clusters that appear more than once OR follow keywords
-    cjk_words = re.findall(r"[\u4e00-\u9fff]{2,4}", text)
-    freq: dict[str, int] = {}
-    for w in cjk_words:
-        freq[w] = freq.get(w, 0) + 1
-    for w, cnt in sorted(freq.items(), key=lambda x: -x[1]):
-        if cnt >= 2 and w not in seen:
-            seen.add(w)
-            tags.append(w)
-
-    return tags[:5]
-
-
-def _extractive_summarize(turns: list[dict], chunk_idx: int,
-                           prev_summary: str) -> dict:
-    """
-    Build a summary from the conversation — no LLM required.
-
-    Priority:
-      1. Read turn_meta["summary"] / turn_meta["entities"] pre-computed
-         by extract_turn_meta() and stored inline in each AI message.
-      2. Fall back to raw text extraction for legacy sessions without turn_meta.
-
-    Score: based on total content length (more content = more important).
-    Tags:  from turn_meta["entities"] if available, else _extract_tags().
-    """
-    user_msgs = [
-        _strip_think(m["content"])
-        for m in turns if m.get("role") == "user"
-    ]
-    asst_msgs = [
-        _strip_think(m["content"])
-        for m in turns if m.get("role") == "assistant"
-    ]
-
-    # ── Priority 1: use pre-computed turn_meta ────────────────────────────────
-    meta_summaries = [
-        m["turn_meta"]["summary"]
-        for m in turns
-        if m.get("role") == "assistant"
-        and isinstance(m.get("turn_meta"), dict)
-        and m["turn_meta"].get("summary")
-    ]
-    meta_entities: list[str] = []
-    for m in turns:
-        if m.get("role") == "assistant" and isinstance(m.get("turn_meta"), dict):
-            meta_entities.extend(m["turn_meta"].get("entities", []))
-
-    if meta_summaries:
-        summary_lines: list[str] = []
-        if prev_summary:
-            summary_lines.append(f"【承接】{prev_summary[:80]}")
-        summary_lines.append("【摘要】" + " / ".join(meta_summaries[:3]))
-        summary = "\n".join(summary_lines)
-        # Deduplicated entities → tags
-        seen: set[str] = set()
-        tags: list[str] = []
-        for e in meta_entities:
-            if e not in seen:
-                seen.add(e)
-                tags.append(e)
-        tags = tags[:5]
-    else:
-        # ── Priority 2: legacy fallback — raw text extraction ─────────────────
-        lines: list[str] = []
-        if prev_summary:
-            lines.append(f"【承接】{prev_summary[:80]}")
-
-        user_text = " / ".join(u[:120] for u in user_msgs if u.strip())
-        if user_text:
-            lines.append(f"【提問】{user_text}")
-
-        if asst_msgs:
-            asst_preview = asst_msgs[0][:200].replace("\n", " ")
-            lines.append(f"【回應】{asst_preview}")
-
-        summary = "\n".join(lines) or f"Chunk {chunk_idx}"
-
-        all_text = " ".join(
-            _strip_think(m.get("content", "")) for m in turns
-        )
-        tags = _extract_tags(all_text)
-
-    # Score: log-scaled content length, capped 1-9
-    total_chars = sum(len(m.get("content", "")) for m in turns)
-    import math
-    score = min(9.0, max(1.0, round(1 + math.log10(max(total_chars, 10)) * 2, 1)))
-
-    logger.info(
-        "Chunk %d summary (%d chars) | tags=%s | score=%.1f | used_meta=%s",
-        chunk_idx, total_chars, tags, score, bool(meta_summaries),
-    )
-    return {"summary": summary, "tags": tags, "score": score}
-
-
-# Keep the old name as an alias so call sites don't change.
-# `llm` param is accepted but ignored — kept for API compatibility.
-def _summarize_chunk_with_llm(turns: list[dict], chunk_idx: int,
-                               prev_summary: str, llm=None) -> dict:
-    return _extractive_summarize(turns, chunk_idx, prev_summary)
-
-
-def _build_chunks(messages: list[dict]) -> list[list[dict]]:
-    """
-    Split messages (pairs of user/assistant) into overlapping chunks.
-    Each chunk contains CHUNK_SIZE turns, with CHUNK_OVERLAP turns shared
-    with the next chunk to preserve semantic continuity.
-    """
-    # Work in turn pairs
-    turns = []
-    for i in range(0, len(messages) - 1, 2):
-        turns.append(messages[i:i + 2])  # [user_msg, assistant_msg]
-
-    if not turns:
-        return []
-
-    chunks = []
-    step = max(1, CHUNK_SIZE - CHUNK_OVERLAP)
-    start = 0
-    while start < len(turns):
-        end = min(start + CHUNK_SIZE, len(turns))
-        chunk_turns = [msg for pair in turns[start:end] for msg in pair]
-        chunks.append(chunk_turns)
-        if end >= len(turns):
-            break
-        start += step
-    return chunks
-
-
-# ── Archive & Summarize ────────────────────────────────────────────────────────
-
-
-
-def archive_and_summarize_session(
-    session_key: str,
-    llm,
-    memory_store: "MemoryStore",
-) -> None:
-    """
-    Full archive pipeline triggered when a session is deleted.
-
-    Changes from v1:
-      - Pre-allocates ALL chunk point_ids before the loop (enables prev/next links)
-      - Builds a session-level summary point ('type'='session_summary') in Qdrant
-      - Each chunk payload gets: type, prev_chunk_id, next_chunk_id, session_point_id
-      - Uses aggregate_session_meta() to merge turn_meta from all AI messages
-
-    Crash-safe checkpoints at every step — resumable after restart.
-    Runs in a background thread — never blocks UI.
-    """
-    from core.turn_meta import aggregate_session_meta
-
-    ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
-    cfg = _load_config()
-
-    # ── Step 0: Load current thread ─────────────────────────────────────────
-    mem = memory_store.load_thread(session_key)
-    messages = mem.recent_messages
-
-    if len(messages) < 2:
-        logger.info("Session '%s' has < 1 turn, skipping archive.", session_key)
-        return
-
-    # ── Step 1: Mark pending ─────────────────────────────────────────────────
-    if mem.archive_state not in ("pending", "summarizing", "done"):
-        mem.archive_state = "pending"
-        mem.archive_started_at = datetime.now(timezone.utc).isoformat()
-        memory_store.save_thread(mem)
-
-    if mem.archive_state == "done":
-        logger.info("Session '%s' already archived, skipping.", session_key)
-        return
-
-    # ── Step 2: Determine archive filename ──────────────────────────────────
-    if mem.archived_file is None:
-        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        archive_filename = f"{date_str}_{session_key}.json"
-        dest = ARCHIVE_DIR / archive_filename
-        counter = 1
-        while dest.exists():
-            archive_filename = f"{date_str}_{session_key}_{counter}.json"
-            dest = ARCHIVE_DIR / archive_filename
-            counter += 1
-
-        thread_src = memory_store._thread_path(session_key)
-        rel_archived = os.path.relpath(str(dest), str(BASE_DIR)).replace("\\", "/")
-        mem.archived_file = rel_archived
-        mem.archive_state = "summarizing"
-        memory_store.save_thread(mem)
-
-        import shutil
-        shutil.copy2(str(thread_src), str(dest))
-        logger.info("Copied thread JSON to archive: %s", dest)
-    else:
-        dest = BASE_DIR / mem.archived_file.replace("/", os.sep)
-
-    rel_archived      = mem.archived_file
-    session_created_at = mem.created_at
-    collection        = datetime.now(timezone.utc).strftime("conv_%Y_%m")
-
+    collection = datetime.now(timezone.utc).strftime("conv_%Y_%m")
     _ensure_conv_collection(collection, cfg)
-
-    # ── Step 3: Build chunks + pre-allocate ALL point IDs ───────────────────
-    # We must know every chunk's point_id BEFORE the loop so we can set
-    # prev_chunk_id / next_chunk_id links correctly.
-    chunks = _build_chunks(messages)
-    if not chunks:
-        mem.archive_state = "done"
-        memory_store.save_thread(mem)
-        return
-
-    already_done  = {c["chunk_index"] for c in mem.archived_chunks}
-    done_ids      = {c["chunk_index"]: c["qdrant_point_id"] for c in mem.archived_chunks}
-
-    # Allocate IDs for chunks not yet done
-    chunk_point_ids: list[str] = []
-    for i in range(len(chunks)):
-        if i in done_ids:
-            chunk_point_ids.append(done_ids[i])
-        else:
-            chunk_point_ids.append(str(uuid.uuid4()))
-
-    # ── Step 4: Build + upsert session-level summary point ──────────────────
-    # Only create once (idempotent via session_point_id checkpoint)
-    if mem.session_point_id is None:
-        agg = aggregate_session_meta(messages)
-
-        session_point_id = str(uuid.uuid4())
-        now_unix = int(time.time())
-        iso_now  = datetime.now(timezone.utc).isoformat()
-
-        session_payload = {
-            "type":             "session_summary",
-            "session_key":      session_key,
-            "archived_file":    rel_archived,
-            "full_summary":     agg["full_summary"],
-            "all_entities":     agg["all_entities"],
-            "all_intents":      agg["all_intents"],
-            "all_time_refs":    agg["all_time_refs"],
-            "turn_count":       mem.turn_count,
-            "date_range":       [session_created_at, iso_now],
-            "first_chunk_id":   chunk_point_ids[0] if chunk_point_ids else None,
-            "last_chunk_id":    chunk_point_ids[-1] if chunk_point_ids else None,
-            "is_deleted":       False,
-            "indexed_at_unix":  now_unix,
-            "indexed_at_iso":   iso_now,
+    
+    point_id = str(uuid.uuid4())
+    now_unix = int(time.time())
+    iso_now  = datetime.now(timezone.utc).isoformat()
+    
+    # Clean the raw text for the context payload
+    clean_user = _strip_think(user_msg)
+    clean_ai   = _strip_think(ai_msg)
+    summary    = turn_meta.get("summary", "")
+    entities   = turn_meta.get("entities", [])
+    intent     = turn_meta.get("intent", "general")
+    
+    payload = {
+        "type": "turn",
+        "session_key": session_key,
+        "summary": summary,
+        "entities": entities,
+        "intent": intent,
+        "ts_unix": now_unix,
+        "dt": iso_now,
+        "is_deleted": False,
+        "context": {
+            "query": clean_user,
+            "answer": clean_ai[:3000] # Cap answer to avoid huge payloads
         }
-        try:
-            embed_text = f"[session] {agg['full_summary'] or session_key}"
-            session_vector = _get_embedding(embed_text, cfg)
-            _upsert_conv_point(collection, session_point_id, session_vector,
-                               session_payload, cfg)
-            mem.session_point_id = session_point_id
-            memory_store.save_thread(mem)
-            logger.info("Session summary point upserted → %s [%s]",
-                        collection, session_point_id)
-        except Exception as e:
-            logger.error("Failed to upsert session summary for '%s': %s",
-                         session_key, e)
-            session_point_id = None  # proceed without it
-    else:
-        session_point_id = mem.session_point_id
-
-    # ── Step 5+6: Summarize + upsert each chunk with links ──────────────────
-    prev_summaries: dict[int, str] = {
-        c["chunk_index"]: c.get("summary", "") for c in mem.archived_chunks
     }
-    step_sz = max(1, CHUNK_SIZE - CHUNK_OVERLAP)
+    
+    embed_text = f"Query: {clean_user}\nSummary: {summary}"
+    try:
+        vector = _get_embedding(embed_text, cfg)
+        _upsert_conv_point(collection, point_id, vector, payload, cfg)
+        logger.info("Upserted turn point %s to %s", point_id, collection)
+    except Exception as e:
+        logger.error("Failed to upsert single turn for %s: %s", session_key, e)
+        
+    return point_id
 
-    for chunk_idx, chunk_msgs in enumerate(chunks):
-        if chunk_idx in already_done:
-            logger.info("Chunk %d already indexed, skipping.", chunk_idx)
-            continue
 
-        # Turn range (1-based)
-        turn_start = chunk_idx * step_sz + 1
-        turn_end   = min(turn_start + CHUNK_SIZE - 1, len(messages) // 2)
-
-        ts_start = next(
-            (m.get("ts", "") for m in chunk_msgs if m.get("role") == "user"), ""
-        )
-        ts_end = next(
-            (m.get("ts", "") for m in reversed(chunk_msgs)
-             if m.get("role") == "assistant"), ""
-        )
-
-        prev_summary = prev_summaries.get(chunk_idx - 1, "")
-        result = _summarize_chunk_with_llm(chunk_msgs, chunk_idx, prev_summary, llm)
-        prev_summaries[chunk_idx] = result["summary"]
-
-        point_id = chunk_point_ids[chunk_idx]
-        now_unix  = int(time.time())
-        iso_now   = datetime.now(timezone.utc).isoformat()
-
-        payload = {
-            # ── Type + navigation ────────────────────────────────────────────
-            "type":             "chunk",
-            "prev_chunk_id":    chunk_point_ids[chunk_idx - 1] if chunk_idx > 0 else None,
-            "next_chunk_id":    chunk_point_ids[chunk_idx + 1] if chunk_idx < len(chunks) - 1 else None,
-            "session_point_id": session_point_id,
-            # ── Identity ─────────────────────────────────────────────────────
-            "session_key":        session_key,
-            "archived_file":      rel_archived,
-            "chunk_index":        chunk_idx,
-            "turn_range":         [turn_start, turn_end],
-            # ── Content ──────────────────────────────────────────────────────
-            "summary":            result["summary"],
-            "prev_chunk_summary": prev_summary,
-            "tags":               result["tags"],
-            "importance_score":   result["score"],
-            "is_deleted":         False,
-            # ── Time fields ──────────────────────────────────────────────────
-            "session_created_at":  session_created_at,
-            "session_deleted_at":  iso_now,
-            "chunk_turn_start_ts": ts_start,
-            "chunk_turn_end_ts":   ts_end,
-            "indexed_at_unix":     now_unix,   # integer — used for time-decay scoring
-            "indexed_at_iso":      iso_now,    # display only
-        }
-
-        try:
-            embed_text = f"[conversation] {result['summary']}"
-            vector = _get_embedding(embed_text, cfg)
-            _upsert_conv_point(collection, point_id, vector, payload, cfg)
-
-            mem.archived_chunks.append({
-                "chunk_index":     chunk_idx,
-                "qdrant_point_id": point_id,
-                "turn_range":      [turn_start, turn_end],
-                "summary":         result["summary"],
-            })
-            memory_store.save_thread(mem)
-            logger.info("Chunk %d → %s [%s]  prev=%s next=%s",
-                        chunk_idx, collection, point_id,
-                        payload["prev_chunk_id"], payload["next_chunk_id"])
-
-        except Exception as e:
-            logger.error("Failed to upsert chunk %d for '%s': %s",
-                         chunk_idx, session_key, e)
-
-    # ── Step 7: Mark done ────────────────────────────────────────────────────
-    mem.archive_state = "done"
-    memory_store.save_thread(mem)
-    logger.info("Archive complete for session '%s' → %s", session_key, rel_archived)
-
-    # Remove original thread file
-    thread_file = DATA_DIR / f"thread_{session_key}.json"
-    if thread_file.exists():
-        try:
-            thread_file.unlink()
-            logger.info("Removed thread file after archiving: %s", thread_file.name)
-        except Exception as e:
-            logger.warning("Could not remove thread file %s: %s",
-                           thread_file.name, e)
+def archive_and_summarize_session(session_key: str, llm, memory_store) -> None:
+    # Legacy wrapper so old imports don't break immediately.
+    # In V3, turn indexing happens live.
+    pass
 
 # ── Startup recovery ───────────────────────────────────────────────────────────
 
-
 def recover_incomplete_archives(memory_store: "MemoryStore", llm) -> None:
-    """
-    Called once at app startup.
-    Resumes any archive that was interrupted by a crash.
-    """
-    for path in DATA_DIR.glob("thread_*.json"):
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-
-        state = data.get("archive_state")
-        if state in ("pending", "summarizing"):
-            session_key = data.get("session_key", path.stem.removeprefix("thread_"))
-            logger.info("Recovery: resuming archive for session '%s' (state=%s)", session_key, state)
-            threading.Thread(
-                target=archive_and_summarize_session,
-                args=(session_key, llm, memory_store),
-                daemon=True,
-                name=f"recovery-{session_key}",
-            ).start()
+    # No longer needed in V3, kept as stub for API compatibility
+    pass
 
 
 # ── MemoryStore ────────────────────────────────────────────────────────────────
@@ -638,6 +296,17 @@ class MemoryStore:
                     attachments: Optional[list] = None,
                     usage: Optional[dict] = None,
                     turn_meta: Optional[dict] = None) -> Generator[str, None, ThreadMemory]:
+        
+        cfg = _load_config()
+        
+        # Async Qdrant upsert so we don't block the UI thread
+        def perform_upsert(meta: dict):
+            point_id = _upsert_single_turn_point(session_key, meta, user_message, ai_message, cfg)
+            meta["qdrant_point_id"] = point_id
+
+        if turn_meta and isinstance(turn_meta, dict):
+            threading.Thread(target=perform_upsert, args=(turn_meta,), daemon=True).start()
+
         with self._lock_session(session_key) as mem:
             mem.turn_count += 1
             user_entry: dict = {
@@ -652,7 +321,7 @@ class MemoryStore:
                 "content": ai_message[:2000],
                 "ts": datetime.now(timezone.utc).isoformat(),
             }
-            # Attach pre-computed turn metadata (summary, entities, intent, time_refs)
+            # Attach pre-computed turn metadata
             if turn_meta and isinstance(turn_meta, dict):
                 ai_entry["turn_meta"] = turn_meta
 
@@ -677,46 +346,24 @@ class MemoryStore:
 
     def delete_thread(self, session_key: str, llm=None) -> bool:
         """
-        Delete a session:
-        - Empty session (no messages) -> immediately remove the file, no archive needed.
-        - Session with content        -> archive in background, file removed after archive.
+        Delete a session file from the active threads, moving it to the archived directory
+        so the raw JSON is preserved for historical debugging/records.
         """
+        import shutil
         path = self._thread_path(session_key)
         if not path.exists():
             return False
 
         with self._lock_session(session_key) as mem:
-            has_content = len(mem.recent_messages) > 0 or mem.turn_count > 0
             mem.is_deleted = True
 
-        if not has_content:
-            # Empty session -- just delete the file immediately
-            try:
-                path.unlink()
-                logger.info("Deleted empty thread file: %s", path.name)
-            except Exception as e:
-                logger.warning("Could not delete thread file %s: %s", path.name, e)
-            return True
-
-        # Session has content -- archive in background (file removed after archive completes)
-        if llm is not None:
-            t = threading.Thread(
-                target=archive_and_summarize_session,
-                args=(session_key, llm, self),
-                daemon=True,
-                name=f"archive-{session_key}",
-            )
-            t.start()
-        else:
-            # No LLM -- just delete the file (no archive possible)
-            logger.warning(
-                "delete_thread called without LLM -- session '%s' will not be archived.", session_key
-            )
-            try:
-                path.unlink()
-                logger.info("Deleted thread file (no LLM): %s", path.name)
-            except Exception as e:
-                logger.warning("Could not delete thread file %s: %s", path.name, e)
+        try:
+            archive_path = ARCHIVE_DIR / f"{path.stem}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.json"
+            shutil.move(str(path), str(archive_path))
+            logger.info("Archived thread file to %s", archive_path.name)
+        except Exception as e:
+            logger.warning("Could not archive thread file %s: %s", path.name, e)
+            
         return True
 
     def list_threads(self, include_deleted: bool = False) -> list[ThreadMemory]:
@@ -799,21 +446,18 @@ def format_memory_for_prompt(mem: "ThreadMemory") -> str:
 ================================================================
 🧠 MEMORY ACTIONS
 ================================================================
-STEP 1 — SEARCH (returns summary + file pointer, lightweight):
+STEP 1 — SEARCH (returns summary + full turn context):
   run_cli_command("python core/mem_scripts/mem_search.py '<query>' --limit 5")
-  run_cli_command("python core/mem_scripts/mem_search.py '<query>' --type conv")
-  run_cli_command("python core/mem_scripts/mem_search.py '<query>' --type doc")
+  run_cli_command("python core/mem_scripts/mem_search.py '<query>' --type conv --min-score 0.7")
+  run_cli_command("python core/mem_scripts/mem_search.py '<query>' --type doc --min-score 0.7")
 
-STEP 2 — READ FULL CONTENT (only when summary is not enough):
-  # Conversations: use the pointer from search result
-  run_cli_command("python core/mem_scripts/mem_search.py read_chunk 'data/memory/archived/xxx.json' '[1,5]'")
-  # Documents: read the file directly
+STEP 2 — READ DOCUMENTS (only when search summary is not enough):
   run_cli_command("cat results/some_file.txt")
 
 UPDATE PROFILE (user preferences / rules / facts):
   run_cli_command("python core/mem_scripts/mem_upsert_profile.py <key> '<value>' --type <preference|profile|agent_rules>")
 
-NOTE: Conversations and files are indexed automatically.
+NOTE: Conversation turns are indexed automatically in real-time.
 ================================================================"""
 
     return persona_block + action_rules

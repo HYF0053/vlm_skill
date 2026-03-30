@@ -35,11 +35,11 @@ Agent 可以動態載入並學習新的技能。包含：
 現有技能包含 `computer-vision` (Ultralytics YOLO Expert 生產工作流)、`map_reduce`、`mcp_client`、`memory`、`pdf`、`pptx`、`rag`、`table_ocr_skill` 與 `web_search` 等，具備高度靈活性。
 > 詳情見 [`docs/computer_vision_yolo.md`](docs/computer_vision_yolo.md) 與 [`docs/agent_optimizations.md`](docs/agent_optimizations.md)。
 
-### 2. 進階記憶管理 (Memory V2 Architecture)
+### 2. 進階記憶管理 (Memory V3 Architecture)
 為解決長對話的 Token 消耗問題與記憶混亂，系統全面重構了記憶架構：
 - **Working Memory (短時記憶)**: 導入了 **Model-Aware Truncation (智慧截斷)** 機制，嚴格監控 Tool Output 長度，防止無限迴圈與 Context Window 枯竭。
-- **Persistent Memory (長時結構化記憶)**: 升級為 Memory V2 架構，透過 `tags` 與 `all_entities` 的 Payload Schema，搭配**兩階段搜尋邏輯 (Two-Pass Search)**，實現更精準且高效的 Qdrant 語意檢索與標準化 Memory Keys 管理。
-> 詳情見 [`docs/memory_v2_architecture.md`](docs/memory_v2_architecture.md)。
+- **Persistent Memory (長時結構化記憶)**: 升級為 Memory V3 架構，從批次總結轉型為「即時單一回合索引 (Real-time Turn-level Indexing)」。採用 Turn-level Payload，並搭配**混合搜尋管道 (Hybrid Search)** (結合 Vector + BM25, 時間衰減與 LLM Reranking)，實現更精準且低延遲的 Qdrant 語意檢索。
+> 詳情見 [`docs/memory_v3_architecture.md`](docs/memory_v3_architecture.md)。
 
 ### 3. 統一專案與實驗管理 (Standardized Directory & Experiment Management)
 所有的檔案收納皆有嚴格規範以確保專案目錄乾淨：
@@ -132,7 +132,7 @@ Agent 可以動態載入並學習新的技能。包含：
 
 ### 核心架構重構 (Core Architecture)
 - [ ] **中央狀態流轉管理 (State Machine / Orchestration)**：參考 LangGraph 架構，將散落的對話邏輯、工具結果統一封裝為 State (狀態機)，讓 Agent 成為接收並改變狀態的節點，解決中央管理不足的問題。
-- [ ] **長期記憶重構 (VectorDB Memory)**：將本地 JSON/TXT 機制升級為向量資料庫 (如 Chroma/Milvus)，並引入混合搜索 (Hybrid Search) 與記憶萃取衰減機制，改善 Token 消耗與擴充痛點。
+- [x] **長期記憶重構 (VectorDB Memory)**：將本地 JSON/TXT 機制升級為向量資料庫 (Qdrant)，已實裝 Memory V3，並引入即時混合搜索 (Hybrid Search) 與記憶萃取衰減機制，改善 Token 消耗與擴充痛點。
 - [ ] **大文本截斷與摘要 (Dynamic Context Management)**：標準化 Token-efficient truncation 策略，為回傳大量文本的工具加入「摘要層節點」，濃縮內容後再交給主 Agent。
 
 ### 智能進化 (Intelligence Evolution)
@@ -145,7 +145,7 @@ Agent 可以動態載入並學習新的技能。包含：
 
 ### 其他優化 (Others)
 - [ ] **多模態即時串流 (Real-time Multimodal Streaming)**：探索 WebRTC 或其他協議在語音與影像上的全雙工即時對話支持。
-- [ ] **GraphRAG 引進**：升級目前的 Memory V2 架構，利用知識圖譜 (Knowledge Graph) 強化複雜邏輯關聯推導。
+- [ ] **GraphRAG 引進**：升級目前的 Memory V3 架構，利用知識圖譜 (Knowledge Graph) 強化複雜邏輯關聯推導。
 - [ ] **自動化測試與 CI/CD (E2E Testing)**：針對各獨立模組 (尤其 Computer Vision 訓練流程) 建立整合測試與自動化驗證部署流。
 - [ ] **UI/UX 強化**：提供任務的樹狀/圖形化視覺呈現，讓使用者更清楚了解 Agent 正在執行哪些分支步驟與分析進度。
 

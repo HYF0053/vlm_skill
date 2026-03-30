@@ -44,7 +44,7 @@
             actor User as 🧑‍💻 使用者
             participant UI as 🎨 Gradio UI (app.py)
             participant Core as 🧠 LangGraph Agent
-            participant Mem as 🗄️ Memory V2 (Qdrant)
+            participant Mem as 🗄️ Memory V3 (Qdrant)
             participant Skill as 🛠️ Skill System (Router)
             participant FS as 📁 檔案系統 (/results, /tmp)
             participant LLM as 🤖 LLM Engine
@@ -54,11 +54,11 @@
             UI->>Core: 觸發 Agent 執行 (傳遞 Thread ID 與 State)
             
             rect rgb(232, 244, 255)
-            Note over Core, Mem: 階段一：長時間記憶檢索 (Two-Pass Search)
-            Core->>Mem: 1. Metadata/Tag 初篩過濾 (Filter)
-            Mem-->>Core: 縮小候選範圍
-            Core->>Mem: 2. 語意向量搜尋 (Semantic Search)
-            Mem-->>Core: 載入專案背景與使用者偏好 (all_entities)
+            Note over Core, Mem: 階段一：長時間記憶檢索 (Hybrid Search Pipeline)
+            Core->>Mem: 1. Vector + BM25 混合搜尋與時間衰減 (Time Decay)
+            Mem-->>Core: 取得初步候選回合
+            Core->>Mem: 2. LLM 重排序 (Reranking)
+            Mem-->>Core: 載入精準的歷史問答上下文 (Turn-level context)
             end
             
             %% 2. 思考與工具呼叫
