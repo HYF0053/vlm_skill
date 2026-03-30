@@ -41,6 +41,18 @@ _STOPWORDS = frozenset({
     "were", "they", "there", "their", "which", "when", "also",
     "here", "some", "more", "than", "then", "into", "just",
     "only", "each", "such", "over", "very", "what", "your",
+    "about", "would", "could", "should", "truth", "blind", "flying",
+    "please", "thank", "thanks", "hello", "hi", "sorry",
+})
+
+_CJK_STOPWORDS = frozenset({
+    "完成", "尚未", "進行", "是否", "需要", "已經", "正在", "可以", 
+    "提供", "說明", "根據", "關於", "顯示", "包括", "特別", "進行中",
+    "回答", "問題", "請求", "處理", "執行", "日誌", "狀態", "結果",
+    "摘要", "總結", "整理", "思考", "分析", "任務", "助手", "過程",
+    "成功", "失敗", "原因", "錯誤", "內容", "部分", "階段", "步驟",
+    "目前", "現在", "今天", "明天", "昨天", "請幫", "幫我", "幫助",
+    "轉錄", "格式", "大小", "檔案", "片段", "分割", "增加", "減少",
 })
 
 _TIME_PATTERN = re.compile(
@@ -65,17 +77,48 @@ def _extract_intent(query: str) -> str:
     return "general"
 
 
+def _clean_content_for_extraction(text: str) -> str:
+    """
+    Remove reasoning blocks, thought processes, and meta-agent talk
+    to focus on the 'meat' of the conversation for entity extraction.
+    """
+    # 1. Strip <think>...</think>
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+    
+    # 2. Strip Thinking Process block (usually at start or after a separator)
+    # This regex looks for 'Thinking Process:' and tries to find where it ends
+    # (usually a double newline or when a known header starts)
+    text = re.sub(r"(?i)Thinking Process:.*?(?=\n\n(?:[#*]|##)|\n\n[^\n]+:|$)", "", text, flags=re.DOTALL)
+    
+    # 3. Strip common meta-headers
+    text = re.sub(r"(?im)^(Analysis|Thought|Plan):.*$", "", text)
+    
+    return text.strip()
+
+
 def _extract_entities(user_query: str, ai_answer: str, max_entities: int = 12) -> list[str]:
-    combined = user_query + " " + ai_answer
+    # Clean AI answer to remove thoughts
+    cleaned_ai = _clean_content_for_extraction(ai_answer)
+    
+    # If cleaned_ai is too short/empty (meaning the message was ONLY thinking),
+    # then fallback to the original but be very strict.
+    if len(cleaned_ai) < 20:
+        combined = user_query + " " + ai_answer
+    else:
+        combined = user_query + " " + cleaned_ai
+        
     entities: list[str] = []
     seen: set[str] = set()
 
     # CJK: 2~4 char clusters appearing ≥2 times, sorted by frequency
     cjk_words = _CJK_PATTERN.findall(combined)
     for word, count in Counter(cjk_words).most_common(20):
+        # Additional filtering for Chinese
         if count >= 2 and word not in seen:
-            entities.append(word)
-            seen.add(word)
+            is_stop = any(sw in word for sw in _CJK_STOPWORDS)
+            if not is_stop:
+                entities.append(word)
+                seen.add(word)
 
     # English: ALL-CAPS acronyms + TitleCase words ≥4 chars
     for m in _ENGLISH_PATTERN.finditer(combined):
@@ -149,65 +192,4 @@ def extract_turn_meta(
     }
 
 
-# ── Aggregation helper (used during archiving) ─────────────────────────────────
-
-def aggregate_session_meta(messages: list[dict]) -> dict:
-    """
-    Merge turn_meta from all AI messages in a session into session-level
-    summary, entities, intents and time_refs. Used by archive_and_summarize_session().
-
-    Args:
-        messages: list of message dicts (recent_messages from ThreadMemory)
-
-    Returns:
-        {
-            "full_summary":  str,       # first 5 turn summaries joined by " | "
-            "all_entities":  list[str], # deduplicated, order-preserving
-            "all_intents":   list[str], # unique intents seen
-            "all_time_refs": list[str], # unique time references
-        }
-    """
-    summaries:  list[str] = []
-    entities:   list[str] = []
-    intents:    list[str] = []
-    time_refs:  list[str] = []
-    seen_ent:   set[str]  = set()
-    seen_int:   set[str]  = set()
-    seen_tr:    set[str]  = set()
-
-    for msg in messages:
-        if msg.get("role") != "assistant":
-            continue
-        meta = msg.get("turn_meta")
-        if not isinstance(meta, dict):
-            continue
-
-        # Summary — keep first 5
-        s = meta.get("summary", "")
-        if s and len(summaries) < 5:
-            summaries.append(s)
-
-        # Entities — deduplicated, order-preserving
-        for e in meta.get("entities", []):
-            if e not in seen_ent:
-                seen_ent.add(e)
-                entities.append(e)
-
-        # Intents
-        intent = meta.get("intent", "")
-        if intent and intent not in seen_int:
-            seen_int.add(intent)
-            intents.append(intent)
-
-        # Time refs
-        for tr in meta.get("time_refs", []):
-            if tr not in seen_tr:
-                seen_tr.add(tr)
-                time_refs.append(tr)
-
-    return {
-        "full_summary":  " | ".join(summaries),
-        "all_entities":  entities[:30],
-        "all_intents":   intents,
-        "all_time_refs": time_refs[:10],
-    }
+# ── Removed Legacy Aggregation Helper ──

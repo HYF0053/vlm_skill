@@ -17,4 +17,4 @@
 深入了解各項核心技術的設計細節：
 - [Agent 最佳化與工具策略 (Agent Optimizations)](agent_optimizations.md)
 - [電腦視覺與 YOLO 產線化 (Computer Vision & YOLO)](computer_vision_yolo.md)
-- [第二代記憶架構 (Memory V2 Architecture)](memory_v2_architecture.md)
+- [第三代記憶架構 (Memory V3 Architecture)](memory_v3_architecture.md)
