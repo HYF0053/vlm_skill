@@ -429,16 +429,23 @@ class UIHandler:
         if not session_key:
             return [], "<div style='color: gray; font-size: 14px;'>請選擇或建立一個 Session...</div>"
         
-        if not (provider and api_url and model_name):
-            return [], "<div style='color: gray; font-size: 14px;'>選擇模型與 Session 後將顯示 Token 使用量...</div>"
-
+        # 1. 優先載入並返回對話歷史 (這不應受模型選擇影響)
         try:
             history = self._get_chatbot_history(session_key)
-            usage_html = self.get_usage_status(session_key, provider, api_url, model_name)
-            return history, usage_html
         except Exception as e:
-            print(f"[UIHandler] Error in on_session_change: {e}")
-            return [], f"錯誤: {e}"
+            print(f"[UIHandler] Error loading chatbot history: {e}")
+            history = []
+
+        # 2. 只有當模型資訊齊全時才更新 Token 使用量 HTML
+        if provider and api_url and model_name:
+            try:
+                usage_html = self.get_usage_status(session_key, provider, api_url, model_name)
+            except Exception:
+                usage_html = "<div style='color: gray; font-size: 14px;'>無法取得使用量資訊。</div>"
+        else:
+            usage_html = "<div style='color: gray; font-size: 14px;'>選擇模型與 Session 後將顯示 Token 使用量...</div>"
+
+        return history, usage_html
 
     def on_add_session_simple(self):
         """建立新 Session（UUID key）"""
@@ -483,7 +490,9 @@ class UIHandler:
 
         keys = self.memory_store.list_session_keys()
         if keys:
-            return gr.Dropdown(choices=keys, value=keys[0]), []
+            new_key = keys[0]
+            new_history = self._get_chatbot_history(new_key)
+            return gr.Dropdown(choices=keys, value=new_key), new_history
         else:
             return gr.Dropdown(choices=[], value=None), []
 
