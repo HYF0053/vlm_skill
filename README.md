@@ -2,6 +2,8 @@
 
 這是一個基於 LangChain 與 LangGraph 開發的多功能 AI Agent 系統，專為處理多模態（Multimodal）任務、OCR 提取、PDF/PPTX 處理、外部工具整合（MCP Server）、長文本 RAG 以及電腦視覺（Computer Vision）生產線架構而設計。
 
+[Download Demo Video](https://drive.google.com/file/d/1z3w-3NxQIyd_EANLfs0sEajQVjm2G7-Z/view?usp=drive_link)
+
 ## 🌟 系統架構 (System Architecture)
 
 本專案經過重新整理，採用模組化設計，提升了可維護性與可擴展性：
