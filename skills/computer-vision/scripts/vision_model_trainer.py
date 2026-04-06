@@ -131,12 +131,29 @@ def resolve_model(model_name: str) -> str:
     return str(weights_path)
 
 
+def resolve_best_weights(config_path: str, fallback_model: str) -> str:
+    """
+    Find the best weights for an experiment. 
+    1. Checks for 'weights/best.pt' relative to the config file (trained weights).
+    2. Falls back to the global weights directory.
+    """
+    result_dir = Path(config_path).resolve().parent
+    trained_best = result_dir / "weights" / "best.pt"
+    if trained_best.exists():
+        print(f"[Weights] Using trained model: {trained_best}")
+        return str(trained_best)
+    return resolve_model(fallback_model)
+
+
 def append_result_log(result_dir: Path, entry: str):
     """Append a summary entry to the result log."""
     log_path = result_dir / "results_summary.txt"
-    with open(log_path, "a") as f:
-        f.write(f"--- {datetime.now().isoformat()} ---\n{entry}\n\n")
-    print(f"[Log] Updated → {log_path}")
+    try:
+        with open(log_path, "a") as f:
+            f.write(f"--- {datetime.now().isoformat()} ---\n{entry}\n\n")
+        print(f"[Log] Updated → {log_path}")
+    except Exception as e:
+        print(f"[Log] Error writing to {log_path}: {e}")
 
 
 # ── Mode Runners ──────────────────────────────────────────────────────────────
@@ -176,11 +193,14 @@ def run_train(config: Dict[str, Any], config_path: str):
     return result_dir
 
 
-def run_val(config: Dict[str, Any], config_path: str):
+def run_val(config: Dict[str, Any], config_path: str, model_override: str = None):
     """Run validation using Python API."""
     from ultralytics import YOLO
 
-    model_path = resolve_model(config.get("model", "best.pt"))
+    if model_override:
+        model_path = resolve_model(model_override)
+    else:
+        model_path = resolve_best_weights(config_path, config.get("model", "best.pt"))
     # Use the directory where hyperparameters.yaml was found as the result folder
     result_dir = Path(config_path).resolve().parent
 
@@ -206,11 +226,14 @@ def run_val(config: Dict[str, Any], config_path: str):
     append_result_log(result_dir, summary)
 
 
-def run_predict(config: Dict[str, Any], source: str, config_path: str):
+def run_predict(config: Dict[str, Any], source: str, config_path: str, model_override: str = None):
     """Run prediction using Python API."""
     from ultralytics import YOLO
 
-    model_path = resolve_model(config.get("model", "best.pt"))
+    if model_override:
+        model_path = resolve_model(model_override)
+    else:
+        model_path = resolve_best_weights(config_path, config.get("model", "best.pt"))
     # Use the directory where hyperparameters.yaml was found as the result folder
     result_dir = Path(config_path).resolve().parent
 
@@ -230,15 +253,19 @@ def run_predict(config: Dict[str, Any], source: str, config_path: str):
     
     summary = f"Predict on '{source}': {len(results)} images processed → {result_dir}"
     print(f"\n[Predict] {summary}")
-    append_result_log(DEFAULT_RESULTS / exp_name, summary)
+    append_result_log(result_dir, summary)
 
 
-def run_export(config: Dict[str, Any], config_path: str, dynamic: bool = True):
+def run_export(config: Dict[str, Any], config_path: str, dynamic: bool = True, format_override: str = None, model_override: str = None):
     """Export model using Python API."""
     from ultralytics import YOLO
 
-    model_path  = resolve_model(config.get("model", "best.pt"))
-    export_fmt  = config.get("format", "onnx")
+    if model_override:
+        model_path = resolve_model(model_override)
+    else:
+        model_path = resolve_best_weights(config_path, config.get("model", "best.pt"))
+
+    export_fmt = format_override if format_override else config.get("format", "onnx")
     # Use the directory where hyperparameters.yaml was found as the result folder
     result_dir  = Path(config_path).resolve().parent
 
@@ -266,6 +293,8 @@ def main():
     parser.add_argument("--source",  default=None,  help="Source for predict mode (image/video/dir)")
     parser.add_argument("--dynamic", action="store_true", dest="dynamic", default=True, help="Enable dynamic batching for export (default: True)")
     parser.add_argument("--no-dynamic", action="store_false", dest="dynamic", help="Disable dynamic batching")
+    parser.add_argument("--format",  default=None, help="Export format override (e.g. engine, openvino, tflite)")
+    parser.add_argument("--weights", default=None, help="Weights bit override (path or name in weights/ folder)")
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -273,14 +302,14 @@ def main():
     if args.mode == "train":
         run_train(config, args.config)
     elif args.mode == "val":
-        run_val(config, args.config)
+        run_val(config, args.config, model_override=args.weights)
     elif args.mode == "predict":
         if not args.source:
             print("ERROR: --source is required for predict mode")
             sys.exit(1)
-        run_predict(config, args.source, args.config)
+        run_predict(config, args.source, args.config, model_override=args.weights)
     elif args.mode == "export":
-        run_export(config, args.config, dynamic=args.dynamic)
+        run_export(config, args.config, dynamic=args.dynamic, format_override=args.format, model_override=args.weights)
 
 
 if __name__ == "__main__":

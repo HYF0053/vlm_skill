@@ -5,6 +5,9 @@ description: Computer vision engineering skill focused exclusively on the Ultral
 
 # Ultralytics YOLO Expert
 
+> [!IMPORTANT]
+> **ABSOLUTE PATHS ARE MANDATORY**. Always use full absolute paths for all arguments. Never use relative paths like `./results/` or `./datasets/`. Resolve `$PROJECT_ROOT` to its actual value before terminal execution.
+
 Production computer vision engineering skill focused on the Ultralytics YOLO framework (v7-v12). Optimized for rapid development, experiment tracking, and production-grade deployment.
 
 ## Table of Contents
@@ -27,7 +30,8 @@ All experiments and data are anchored to **`PROJECT_ROOT`**.
 ### Directory Layout
 - **Datasets**: `$PROJECT_ROOT/datasets/[dataset_name]/`
 - **Pretrained Weights**: `$PROJECT_ROOT/weights/` (managed via `ultralytics.settings`)
-- **Results**: `$PROJECT_ROOT/results/[name]_[timestamp]/`
+- **Results**: `$PROJECT_ROOT/results/[name]_[run_id]/`
+    - `run_id`: A session-based ID (when run via UI) or timestamp. Grouping by session prevents folder explosion during iterations/corrections.
     - `hyperparameters.yaml`: Your input configuration.
     - `args.yaml`: The actual parameters used by the engine.
     - `weights/`: Best and last weights (.pt).
@@ -42,7 +46,8 @@ settings.update({"weights_dir": "$PROJECT_ROOT/weights"})
 ### Strict Agent Protocol
 1. **NO DIRECT CLI**: Do not use the `yolo` command directly (CLI is disabled in Docker).
 2. **USE SKILL SCRIPTS**: Always use the provided Python scripts.
-3. **UNIFIED FOLDERS**: All related files (config, models, logs) for a single run stay in the SAME timestamped folder.
+3. **UNIFIED FOLDERS**: All results for a run stay in a session-named folder. Multiple iterations or corrections for the same model in one session will reuse the folder.
+4. **ABSOLUTE PATHS ONLY**: Always use absolute paths for all script arguments (datasets, configs, sources). Resolve `$PROJECT_ROOT` to its full absolute value before executing. NEVER use relative paths like `./results/`.
 
 ---
 
@@ -78,13 +83,13 @@ python $PROJECT_ROOT/skills/computer-vision/scripts/create_config.py \
     --data $PROJECT_ROOT/datasets/my_dataset/data.yaml \
     --epochs 100 --batch 16
 ```
-> **Note**: This will automatically create a folder like: `results/my_dataset_yolo11n_20260329_145500/`
+> **Note**: This will automatically create a folder like: `results/my_dataset_yolo11n_[run_id]/`
 
 ### Step 2: Run Training
 Pass the generated config file in the timestamped folder.
 ```bash
 python $PROJECT_ROOT/skills/computer-vision/scripts/vision_model_trainer.py \
-    --config $PROJECT_ROOT/results/my_dataset_yolo11n_20260329_145500/hyperparameters.yaml \
+    --config $PROJECT_ROOT/results/my_dataset_yolo11n_[run_id]/hyperparameters.yaml \
     --mode train
 ```
 > **Note**: All outputs (weights, logs) will stay in this same directory.
@@ -96,14 +101,14 @@ python $PROJECT_ROOT/skills/computer-vision/scripts/vision_model_trainer.py \
 ### Validation
 ```bash
 python $PROJECT_ROOT/skills/computer-vision/scripts/vision_model_trainer.py \
-    --config $PROJECT_ROOT/results/my_dataset_yolo11n_20260329_145500/hyperparameters.yaml \
+    --config $PROJECT_ROOT/results/my_dataset_yolo11n_[run_id]/hyperparameters.yaml \
     --mode val
 ```
 
 ### Prediction
 ```bash
 python $PROJECT_ROOT/skills/computer-vision/scripts/vision_model_trainer.py \
-    --config $PROJECT_ROOT/results/my_dataset_yolo11n_20260329_145500/hyperparameters.yaml \
+    --config $PROJECT_ROOT/results/my_dataset_yolo11n_[run_id]/hyperparameters.yaml \
     --mode predict \
     --source $PROJECT_ROOT/data/test_images/
 ```
@@ -112,12 +117,21 @@ python $PROJECT_ROOT/skills/computer-vision/scripts/vision_model_trainer.py \
 
 ## Workflow 4: Export & Optimization
 
-### Export to ONNX/TensorRT
+### Export to ONNX / TensorRT / OpenVINO
+The script automatically detects trained weights (`best.pt`) in the experiment folder.
+
 ```bash
+# Export to ONNX (Default)
 python $PROJECT_ROOT/skills/computer-vision/scripts/vision_model_trainer.py \
-    --config $PROJECT_ROOT/results/my_dataset_yolo11n_20260329_145500/hyperparameters.yaml \
-    --mode export --dynamic
+    --config $PROJECT_ROOT/results/my_dataset_yolo11n_[run_id]/hyperparameters.yaml \
+    --mode export
+
+# Export to TensorRT (Recommended for NVIDIA GPU)
+python $PROJECT_ROOT/skills/computer-vision/scripts/vision_model_trainer.py \
+    --config $PROJECT_ROOT/results/my_dataset_yolo11n_[run_id]/hyperparameters.yaml \
+    --mode export --format engine --dynamic
 ```
+> **Note**: For TensorRT, use `--format engine`. For OpenVINO, use `--format openvino`.
 
 ### Inference Optimization
 
@@ -127,7 +141,7 @@ Use `inference_optimizer.py` to analyze, benchmark, and get optimization recomme
 Analyze model structure, parameters, layers, and input/output shapes:
 ```bash
 python $PROJECT_ROOT/skills/computer-vision/scripts/inference_optimizer.py \
-    $PROJECT_ROOT/results/my_dataset_yolo11n_20260329_145500/weights/best.pt \
+    $PROJECT_ROOT/results/my_dataset_yolo11n_[run_id]/weights/best.pt \
     --analyze
 ```
 
@@ -135,7 +149,7 @@ python $PROJECT_ROOT/skills/computer-vision/scripts/inference_optimizer.py \
 Test inference speed, latency, and throughput across different batch sizes:
 ```bash
 python $PROJECT_ROOT/skills/computer-vision/scripts/inference_optimizer.py \
-    $PROJECT_ROOT/results/my_dataset_yolo11n_20260329_145500/weights/best.pt \
+    $PROJECT_ROOT/results/my_dataset_yolo11n_[run_id]/weights/best.pt \
     --benchmark --input-size 640 640 --batch-sizes 1 4 8
 ```
 
@@ -143,7 +157,7 @@ python $PROJECT_ROOT/skills/computer-vision/scripts/inference_optimizer.py \
 Get platform-specific acceleration steps and commands based on your deployment target (`gpu`, `cpu`, `edge`, `mobile`, `apple`, `intel`):
 ```bash
 python $PROJECT_ROOT/skills/computer-vision/scripts/inference_optimizer.py \
-    $PROJECT_ROOT/results/my_dataset_yolo11n_20260329_145500/weights/best.pt \
+    $PROJECT_ROOT/results/my_dataset_yolo11n_[run_id]/weights/best.pt \
     --recommend --target gpu
 ```
 
