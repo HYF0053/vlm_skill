@@ -11,14 +11,16 @@ def create_ui(handler):
                 with gr.Group():
                     gr.Markdown("### 🔑 Session Management")
 
-                    # Ensure at least one session exists
-                    if not handler.memory_store.list_threads():
-                        from core.memory import ThreadMemory
-                        handler.memory_store.save_thread(ThreadMemory(
-                            session_key=handler.memory_store.get_next_session_name(),
-                        ))
+                    def _get_initial_sessions():
+                        s_keys = handler.memory_store.list_session_keys()
+                        if not s_keys:
+                            from core.memory import ThreadMemory
+                            new_key = handler.memory_store.get_next_session_name()
+                            handler.memory_store.save_thread(ThreadMemory(session_key=new_key))
+                            s_keys = [new_key]
+                        return s_keys
 
-                    initial_keys    = handler.memory_store.list_session_keys()
+                    initial_keys    = _get_initial_sessions()
                     initial_session = initial_keys[0] if initial_keys else ""
 
                     with gr.Row():

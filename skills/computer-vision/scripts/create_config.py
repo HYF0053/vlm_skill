@@ -210,11 +210,17 @@ def create_config(model: str, data: str, name: str = None, **overrides) -> dict:
     weights_path = (DEFAULT_WEIGHTS / model_name).resolve()
     cfg["model"] = str(weights_path)
 
-    # Auto-generate name as [label/dataset]_[model]_[timestamp]
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # Support session-based naming to avoid folder explosion during corrections/iterations
+    session_id = os.environ.get("SESSION_ID")
+    if session_id:
+        # Use first 8 characters of session id for stability within one session
+        run_id = session_id[:8]
+    else:
+        run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
     dataset_name = data_path.parent.name if data_path.suffix == ".yaml" else data_path.name
     base_name = name if name else dataset_name
-    cfg["name"] = f"{base_name}_{model_stem}_{ts}"
+    cfg["name"] = f"{base_name}_{model_stem}_{run_id}"
 
     # Apply any extra CLI overrides
     for k, v in overrides.items():
